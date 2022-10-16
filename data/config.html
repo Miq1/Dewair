@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html>
+  <head> <title>Dewair configuration</title> </head>
+  <script>
+  // Flad variables for the visibility of both sensor parts
+  var R1an = false;
+  var R2an = false;
+
+  // Inject form data by separate script
+  const scriptTag = document.createElement("script");
+  scriptTag.src = "/set.js";
+  document.head.appendChild(scriptTag);
+
+  // As soon as page is loaded, attach triggers and inject data
+  window.onload = injectData;
+  function injectData() {
+    // First get form data
+    setValues();
+
+    // Add triggers
+    // All rb1 class radio buttons: onchange=changeR1()
+    let crs = document.querySelectorAll(".t1");
+    for (var i = 0; i < crs.length; i++) {
+      crs[i].addEventListener("change", changeT);
+    }
+
+    // All rb1 class radio buttons: onchange=changeR1()
+    crs = document.querySelectorAll(".rb1");
+    for (var i = 0; i < crs.length; i++) {
+      crs[i].addEventListener("change", changeR1);
+    }
+
+    // All rb2 class radio buttons: onchange=changeR2()
+    crs = document.querySelectorAll(".rb2");
+    for (var i = 0; i < crs.length; i++) {
+      crs[i].addEventListener("change", changeR2);
+    }
+
+    // Add numeric range check and title to all numCheck class inputs
+    crs = document.querySelectorAll(".numCheck");
+    for (var i = 0; i < crs.length; i++) {
+      crs[i].addEventListener("blur", checkMe);
+      crs[i].setAttribute("title", "Range [ "+crs[i].min+" .. "+crs[i].max+" ]");
+    }
+
+    // Add hysteresis duration calculation to all class calcHy fields: onchange=calculateHysteresis()
+    crs = document.querySelectorAll(".calcHy");
+    for (var i = 0; i < crs.length; i++) {
+      crs[i].addEventListener("change", calculateHysteresis);
+    }
+
+    // Run triggers once to react on injected form data
+    changeT();
+    changeR1();
+    changeR2();
+    calculateHysteresis();
+  }
+
+  // rb1 (Sensor 1) class trigger function
+  function changeR1() {
+    return changeUniversal(".F1c", ".F2c", ".rb1");
+  }
+
+  // rb2 (Sensor 2) class trigger function
+  function changeR2() {
+    return changeUniversal(".F3c", ".F4c", ".rb2");
+  }
+
+  // t1 (Target) class trigger function
+  function changeT() {
+    // Use common function with non-existing NXXXN class for first component
+    return changeUniversal(".NXXXN", ".TADDRc", ".t1");
+  }
+
+  // Calculate hysteresis duration from steps and step length
+  function calculateHysteresis() {
+    // Find target test div
+    let v = document.getElementById( "totalHy" );
+    // Find all involved number fields
+    let r = document.querySelectorAll( ".calcHy" );
+    
+    // Calculate product
+    let hyTotal = 1;
+    for (let i = 0; i < r.length; i++) {
+      hyTotal = hyTotal * r[i].value;
+    }
+    // Set text accordingly
+    v.innerHTML = "&#10132; shortest switching time "+hyTotal+" seconds";
+  }
+
+  // "Universal" trigger function, toggling class FC! and FC2 elements.
+  // Class TC is used to find the causing button
+  function changeUniversal(FC1, FC2, TC) {
+    let F1 = document.querySelectorAll( FC1 );
+    let F2 = document.querySelectorAll( FC2 );
+      
+    // Find the selected radio button 0, 1 or 2
+    let v = document.querySelectorAll( TC );
+    let vv = 0;
+    for (var i = 0; i < v.length; i++) {
+      if (v[i].checked) {
+        vv = i;
+        break;
+      }
+    }
+    
+    // Set flag variables according to button selected and area 
+    if (TC == ".rb1") {
+      if (vv == 0) { R1an = false; } else { R1an = true; }
+    } else if (TC == ".rb2") {
+      if (vv == 0) { R2an = false; } else { R2an = true; }
+    } 
+    
+    // Switch visibility for all affected elements
+    for (var i = 0; i < F1.length; i++) {
+      if (vv == 0) {
+        F1[i].style.display = "none";
+      } else {
+        F1[i].style.display = "table-row";
+      }
+    }
+    for (var i = 0; i < F2.length; i++) {
+      if (vv == 2) {
+        F2[i].style.display = "table-row";
+      } else {
+        F2[i].style.display = "none";
+      }
+    }
+      
+    // As a result, the visibility of the common area may be affected - check it
+    checkCommon();
+  }
+
+  // Depending on flag variables, show/hide common area
+  function checkCommon() {
+    let CC = document.querySelectorAll( ".Cclass" );
+    for (var i = 0; i < CC.length; i++) {
+      if (R1an && R2an) {
+        CC[i].style.display = "block";
+      } else {
+        CC[i].style.display = "none";
+      }
+    }
+  }
+    
+  // Numeric range check for number fields
+  function checkMe() {
+    if (this.type == "number") {
+      if (this.min && Number(this.value) < Number(this.min)) { this.value = this.min; }
+      if (this.max && Number(this.value) > Number(this.max)) { this.value = this.max; }
+    }
+  }
+
+  </script>
+  <style>
+    * { font-family: sans-serif;}
+    input { font-size: large; font-family: monospace;}
+    th, td { padding: 10px; }
+  </style>
+  <body>
+    <h1>Dewair configuration</h1>
+    <OBJECT data="device.html">
+      Warning: device.html could not be included.
+    </OBJECT>
+    <table>
+      <tr>
+        <td>
+          <form method="post" name="F" action="/sub">
+            <h3>Basic data</h3>
+            <table style="background-color: #e6d380;" width="100%">
+              <tr align="left">
+                <th>Device name</th>
+                <td>
+                  <input type="text" name="CV0" id="devn" required>
+                </td>
+              </tr>
+              <tr align="left">
+                <th>WiFi SSID</th>
+                <td>
+                  <input type="text" name="CV1" id="ssid" required>
+                </td>
+              </tr>
+              <tr align="left">
+                <th>WiFi password</th>
+                <td>
+                  <input type="text" name="CV2" id="pass" required>
+                </td>
+              </tr>
+              <tr align="left">
+                <th>OTA password</th>
+                <td>
+                  <input type="text" name="CV3" id="otapass" required>
+                </td>
+              </tr>
+              <tr align="left">
+                <th>Master switch</th>
+                <td>
+                  <fieldset>
+                    <input type="radio" id="MON" name="CV4" value="1" checked> <label for="ON">ON</label>
+                    <input type="radio" id="MOFF" name="CV4" value="0"> <label for="OFF">OFF</label>
+                  </fieldset>
+                </td>
+              </tr>
+              <tr align="left">
+                <th>Hysteresis</th>
+                <td>
+                  <input type="number" name="CV5" id="hyst" size="5" min="1" max="16" step="1" class="numCheck calcHy" value="5">
+                  <label for="hyst">steps x </label>
+                  <input type="number" id="interval" name="CV6" size="9" min="10" max="3600" step="1" class="numCheck calcHy" value="30">
+                  <label for="interval">seconds</label>
+                  <div id="totalHy"></div>
+                </td>
+              </tr>
+            </table>
+            <h3>Target socket</h3>
+            <table style="background-color: #c3e9a0;" width="100%">
+              <tr align="left">
+                <th width="20%">Target device</th>
+                <td align="left">
+                  <input type="radio" id="tnone" name="CV7" class="t1" value="0"><label for="tnone">ignore</label>
+                  <input type="radio" id="tlocal" name="CV7" class="t1" value="1" checked><label for="tlocal">connected</label>
+                  <input type="radio" id="tmodbus" name="CV7" class="t1" value="2"><label for="tmodbus">Modbus source</label>
+                </td>
+              </tr>
+              <tr align="left" id="taddr" class="TADDRc">
+                <th>Modbus TCP address</th>
+                <td>
+                  <fieldset>
+                    <input type="number" name="CV8" class="numCheck">.
+                    <input type="number" name="CV9" class="numCheck">.
+                    <input type="number" name="CV10" class="numCheck">.
+                    <input type="number" name="CV11" class="numCheck">
+                    Port <input type="number" name="CV12" id="port" size="7" min="1" max="65535" step="1" value="502" class="numCheck">
+                    Server ID <input type="number" name="CV13" id="sid" size="5" min="1" max="247" step="1" value="1" class="numCheck">
+                  </fieldset>
+                </td>
+              </tr>
+            </table>
+            <h3>Sensor sources</h3>
+            <table style="background-color: #c3e9a0;" width="100%">
+              <tr align="left">
+                <th>Sensor 1</th>
+                <td>
+                  <div>
+                    <input type="radio" id="s1none" name="CV14" class="rb1" value="0"><label for="s1none">ignore</label>
+                    <input type="radio" id="s1local" name="CV14" class="rb1" value="1" checked><label for="s1local">connected</label>
+                    <input type="radio" id="s1modbus" name="CV14" class="rb1" value="2"><label for="s1modbus">Modbus source</label>
+                  </div>
+                </td>
+              </tr>
+              <tr align="left" class="F2c">
+                <th>&nbsp;</th>
+                <td>
+                  <fieldset id="s1addr">
+                    <input type="number" name="CV15" class="numCheck">.
+                    <input type="number" name="CV16" class="numCheck">.
+                    <input type="number" name="CV17" class="numCheck">.
+                    <input type="number" name="CV18" class="numCheck">
+                    Port <input type="number" name="CV19" id="s1port" size="7" min="1" max="65535" step="1" value="502" class="numCheck">
+                    Server ID <input type="number" name="CV20" id="s1sid" size="5" min="1" max="247" step="1" value="1" class="numCheck">
+                    Sensor slot <input type="number" name="CV21" id="s1slot" size="5" min="1" max="2" step="1" value="1" class="numCheck">
+                  </fieldset>
+                </td>
+              </tr>
+              <tr align="left" class="F1c">
+                <th>&nbsp;</th>
+                <th>
+                  <fieldset id="s1cond">
+                    ON condition<br/>
+                    <table>
+                      <tr>
+                        <td>Temperature</td>
+                        <td>
+                          <input type="radio" id="s1tign" name="CV22" value="0" checked><label for="s1tign">ignore</label>
+                          <input type="radio" id="s1tbel" name="CV22" value="1" ><label for="s1tbel">if below</label>
+                          <input type="radio" id="s1tabv" name="CV22" value="2" ><label for="s1tabv">if above</label>
+                          <input type="number" name="CV23" id="s1temp" size="9" min="-50.0" max="100.0" step="0.1" class="numCheck">
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Humidity</td>
+                        <td>
+                          <input type="radio" id="s1hign" name="CV24" value="0" checked><label for="s1hign">ignore</label>
+                          <input type="radio" id="s1hbel" name="CV24" value="1" ><label for="s1hbel">if below</label>
+                          <input type="radio" id="s1habv" name="CV24" value="2" ><label for="s1habv">if above</label>
+                          <input type="number" name="CV25" id="s1hum" size="9" min="0.0" max="100.0" step="0.1" class="numCheck">
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Dew point</td>
+                        <td>
+                          <input type="radio" id="s1dign" name="CV26" value="0" checked><label for="s1dign">ignore</label>
+                          <input type="radio" id="s1dbel" name="CV26" value="1"><label for="s1dbel">if below</label>
+                          <input type="radio" id="s1dabv" name="CV26" value="2"><label for="s1dabv">if above</label>
+                          <input type="number" name="CV27" id="s1dew" size="9" min="-50.0" max="50.0" step="0.1" class="numCheck">
+                        </td>
+                      </tr>
+                    </table>
+                  </fieldset>
+                </th>
+              </tr>
+              <tr align="left">
+                <th>Sensor 2</th>
+                <td>
+                  <div>
+                    <input type="radio" id="s2none" name="CV28" class="rb2" value="0"><label for="s2none">ignore</label>
+                    <input type="radio" id="s2local" name="CV28" class="rb2" value="1" checked><label for="s2local">connected</label>
+                    <input type="radio" id="s2modbus" name="CV28" class="rb2" value="2"><label for="s2modbus">Modbus source</label>
+                  </div>
+                </td>
+              </tr>
+              <tr align="left" class="F4c">
+                <th>&nbsp;</th>
+                <td>
+                  <fieldset id="s2addr">
+                    <input type="number" name="CV29" class="numCheck">.
+                    <input type="number" name="CV30" class="numCheck">.
+                    <input type="number" name="CV31" class="numCheck">.
+                    <input type="number" name="CV32" class="numCheck">
+                    Port <input type="number" name="CV33" id="s2port" size="7" min="1" max="65535" step="1" value="502" class="numCheck">
+                    Server ID <input type="number" name="CV34" id="s2sid" size="5" min="1" max="247" step="1" value="1" class="numCheck">
+                    Sensor slot <input type="number" name="CV35" id="s2slot" size="5" min="1" max="2" step="1" value="2" class="numCheck">
+                  </fieldset>
+                </td>
+              </tr>
+              <tr align="left" class="F3c">
+                <th>&nbsp;</th>
+                <th>
+                  <fieldset id="s2cond">
+                    ON condition<br/>
+                    <table>
+                      <tr>
+                        <td>Temperature</td>
+                        <td>
+                          <input type="radio" id="s2tign" name="CV36" value="0" checked><label for="s2tign">ignore</label>
+                          <input type="radio" id="s2tbel" name="CV36" value="1" ><label for="s2tbel">if below</label>
+                          <input type="radio" id="s2tabv" name="CV36" value="2" ><label for="s2tabv">if above</label>
+                          <input type="number" name="CV37" id="s2temp" size="9" min="-50.0" max="100.0" step="0.1" class="numCheck">
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Humidity</td>
+                        <td>
+                          <input type="radio" id="s2hign" name="CV38" value="0" checked><label for="s2hign">ignore</label>
+                          <input type="radio" id="s2hbel" name="CV38" value="1" ><label for="s2hbel">if below</label>
+                          <input type="radio" id="s2habv" name="CV38" value="2" ><label for="s2habv">if above</label>
+                          <input type="number" name="CV39" id="s2hum" size="9" min="0.0" max="100.0" step="0.1" class="numCheck">
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>Dew point</td>
+                        <td>
+                          <input type="radio" id="s2dign" name="CV40" value="0" checked><label for="s2dign">ignore</label>
+                          <input type="radio" id="s2dbel" name="CV40" value="1" ><label for="s2dbel">if below</label>
+                          <input type="radio" id="s2dabv" name="CV40" value="2" ><label for="s2dabv">if above</label>
+                          <input type="number" name="CV41" id="s2dew" size="9" min="-50.0" max="50.0" step="0.1" class="numCheck">
+                        </td>
+                      </tr>
+                    </table>
+                  </fieldset>
+                </th>
+              </tr>
+            </table>
+            <div class="Cclass">
+              <h3>Combined conditions</h3>
+              <table style="background-color: #c3e9a0;" width="100%">
+                <tr align="left">
+                  <th>Temperature<br/> T(sensor 1) - T(sensor 2)</th>
+                  <td>
+                    <fieldset id="CT">
+                      <input type="radio" id="cotign" name="CV42" value="0" checked><label for="cotign">ignore</label>
+                      <input type="radio" id="cotbel" name="CV42" value="1" ><label for="cotbel">if below</label>
+                      <input type="radio" id="cotabv" name="CV42" value="2" ><label for="cotabv">if above</label>
+                      <input type="number" name="CV43" id="cotemp" size="9" min="-100.0" max="100.0" step="0.1" class="numCheck">
+                    </fieldset>
+                  </td>
+                </tr>
+                <tr align="left">
+                  <th>Humidity<br/> H(sensor 1) - H(sensor 2)</th>
+                  <td>
+                    <fieldset id="CH">
+                      <input type="radio" id="cohign" name="CV44" value="0" checked><label for="cohign">ignore</label>
+                      <input type="radio" id="cohbel" name="CV44" value="1" ><label for="cohbel">if below</label>
+                      <input type="radio" id="cohabv" name="CV44" value="2" ><label for="cohabv">if above</label>
+                      <input type="number" name="CV45" id="cohum" size="9" min="-100.0" max="100.0" step="0.1" class="numCheck">
+                    </fieldset>
+                  </td>
+                </tr>
+                <tr align="left">
+                  <th>Dew point<br/> D(sensor 1) - D(sensor 2)</th>
+                  <td>
+                    <fieldset id="CD">
+                      <input type="radio" id="codign" name="CV46" value="0" checked><label for="codign">ignore</label>
+                      <input type="radio" id="codbel" name="CV46" value="1" ><label for="codbel">if below</label>
+                      <input type="radio" id="codabv" name="CV46" value="2" ><label for="codabv">if above</label>
+                      <input type="number" name="CV47" id="codew" size="9" min="-100.0" max="100.0" step="0.1" class="numCheck">
+                    </fieldset>
+                  </td>
+                </tr>
+              </table>
+            </div>
+            <div>
+              <input type="submit" value="SAVE">
+            </div>
+          </form>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
