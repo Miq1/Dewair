@@ -1,7 +1,6 @@
 // Copyright 2022 Michael Harwerth miq1 _ at _ gmx _ dot _ de
 
 #include <Arduino.h>
-#include <Version.h>
 #include <ESP8266WiFi.h>
 #include <ArduinoOTA.h>
 #include <ESPAsyncTCP.h>
@@ -9,6 +8,7 @@
 #include <LittleFS.h>
 #include <ESP8266WebServer.h>
 #include "DHTesp.h"
+#include "Version.h"
 #include "Blinker.h"
 #include "Buttoner.h"
 #include "RingBuf.h"
@@ -19,9 +19,7 @@
 #include "Logging.h"
 
 // To do:
-// WiFi
 // Modbus
-// Config
 
 // Pin definitions
 #define SENSOR_0 D2
@@ -841,6 +839,7 @@ void handleDevice() {
     message += "<button onclick=\"window.location.href='/config.html';\"> CONFIG page </button>";
     message += "<button onclick=\"window.location.href='/restart';\"> Restart </button>";
   }
+  message += "<br/>Version " + String(VERSION) + " - Build " + String(BUILD_TIMESTAMP);
   message += "<br/>Restarts: ";
   message += settings.restarts;
   message += "<br/>";
