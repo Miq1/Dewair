@@ -309,11 +309,13 @@ enum S_EVENT : uint8_t  {
   BOOT_DATE, BOOT_TIME, 
   MASTER_ON, MASTER_OFF,
   TARGET_ON, TARGET_OFF,
+  ENTER_MAN, EXIT_MAN,
 };
 const char *eventname[] = { 
   "no event", "date change", "boot date", "boot time", 
   "MASTER on", "MASTER off", 
   "target on", "target off", 
+  "enter manual", "exit manual",
 };
 // Allocate event buffer
 RingBuf<uint16_t> events(MAXEVENT);
@@ -566,6 +568,46 @@ void notFound() {
   message += "\n";
   for (uint8_t i = 0; i < HTMLserver.args(); i++) { message += " " + HTMLserver.argName(i) + ": " + HTMLserver.arg(i) + "\n"; }
   HTMLserver.send(404, "text/plain", message);
+  HTMLserver.client().stop();
+}
+
+// Restart device
+void handleRestart() {
+  HTMLserver.client().stop();
+  ESP.restart();
+}
+
+// Put out device status
+void handleDevice() {
+  String message;
+  message = "<!DOCTYPE html><html><header><link rel=\"stylesheet\" href=\"/styles.css\"><title>";
+  if (*settings.deviceName) {
+    message += settings.deviceName;
+  } else {
+    message += AP_SSID;
+  }
+  message += " status</title></header><body>\n";
+  message += "<OBJECT data=\"/device.html\" width=\"100%\" height=\"50%\"> Warning: device.html could not be included. </OBJECT>\n<div>";
+  message += "<h3>Events</h3><table>";
+  char buf[64];
+  for (auto e : events) {
+    uint8_t ev = (e >> 11) & 0x1F;
+    uint8_t hi = (e >> 6) & 0x1F;
+    uint8_t lo = e & 0x3F;
+    if (ev != NO_EVENT) {
+      char sep = (e == BOOT_DATE || e == DATE_CHANGE) ? '.' : ':';
+      snprintf(buf, 64, "<tr><th align=\"left\">%s</th><td>%02d%c%02d.</td></tr>\n", eventname[ev], hi, sep, lo);
+      message += buf;
+    }
+  }
+  message += "</table></div><div>\n";
+  if (mode == CONFIG) {
+    message += "<button onclick=\"window.location.href='/config.html';\" class=\"button\"> CONFIG page </button><div class=\"divider\"/>";
+    message += "<button onclick=\"window.location.href='/restart';\" class=\"button red-button\"> Restart </button></div>";
+  }
+  message += "</body></html>";
+  HTMLserver.send(200, "text/html", message);
+  HTMLserver.client().stop();
 }
 
 // Process config data received
@@ -806,45 +848,11 @@ void handleSet() {
       LOG_I("Unknown POST arg '%s'\n", cp);
     }
   }
-  // Send result page
-  String message(250);
-  message = "<!DOCTYPE html><html><header>Done</header><body>";
   // If we found changes, report it.
   if (needsWrite) {
     writeSettings();
-    message += "<br/>Configuration changes written.<br/>";
   }
-  message += "<button onclick=\"window.location.href='/config.html';\"> CONFIG page </button>";
-  message += "<button onclick=\"window.location.href='/restart';\"> Restart </button>";
-  message += "</body></html>";
-  HTMLserver.send(200, "text/html", message);
-}
-
-// Restart device
-void handleRestart() {
-  ESP.restart();
-}
-
-// Put out device status
-void handleDevice() {
-  String message(250);
-  message = "<!DOCTYPE html><html><header>";
-  if (*settings.deviceName) {
-    message += settings.deviceName;
-  } else {
-    message += AP_SSID;
-  }
-  message += " status</header><body><hr/>";
-  if (mode == CONFIG) {
-    message += "<button onclick=\"window.location.href='/config.html';\"> CONFIG page </button>";
-    message += "<button onclick=\"window.location.href='/restart';\"> Restart </button>";
-  }
-  message += "<br/>Version " + String(VERSION) + " - Build " + String(BUILD_TIMESTAMP);
-  message += "<br/>Restarts: ";
-  message += settings.restarts;
-  message += "<br/>";
-  message += "<hr/></body></html>";
-  HTMLserver.send(200, "text/html", message);
+  handleDevice();
 }
 
 void setup() {
@@ -978,9 +986,6 @@ void setup() {
     registerEvent(BOOT_DATE);
     registerEvent(BOOT_TIME);
 
-    // Start mDNS
-    MDNS.begin(settings.deviceName);
-
     // Calculate hysteresis mask
     uint8_t hw = settings.hystSteps == 0 ? 16 : settings.hystSteps;
     HYSTERESIS_MASK = (1 << hw) - 1;
@@ -1007,8 +1012,59 @@ void setup() {
     HTMLserver.on("/set.js", notFound);
     HTMLserver.on("/sub", notFound);
     HTMLserver.on("/restart", notFound);
-    HTMLserver.on("/", handleDevice);
 
+    // Create device info file
+    File dF = LittleFS.open("/device.html", "w");
+    if (dF) {
+      // HTML lead-in
+      dF.print("<!DOCTYPE html> <html><header> <link rel=\"stylesheet\" href=\"styles.css\"> </header> <body><hr/>\n");
+      dF.printf("<h2>%s status</h2>\n", *settings.deviceName ? settings.deviceName : AP_SSID);
+      dF.print("<table>\n");
+      dF.print("<tr align=\"left\"><th>Version</th><td>" VERSION "</td></tr>\n");
+      dF.print("<tr align=\"left\"><th>Build</th><td>" BUILD_TIMESTAMP "</td></tr>\n");
+      dF.printf("<tr align=\"left\"><th>Restarts</th><td>%d</td>\n", settings.restarts);
+      dF.printf("<tr align=\"left\"><th>Master switch</th><td>%s</td>\n", settings.masterSwitch ? "ON" : "OFF");
+      dF.printf("<tr align=\"left\"><th>Measuring every</th><td>%d seconds</td>\n", settings.measuringInterval);
+      dF.printf("<tr align=\"left\"><th>Switching on</th><td>%d consecutive identical evaluations</td>\n", settings.hystSteps);
+      dF.print("<tr align=\"left\"><th>Switch conditions</th><td>");
+      const char *word = "IF ";
+      for (uint8_t i = 0; i < 2; i++) {
+        if (settings.sensor[i].TempMode) {
+          dF.printf("%s sensor %d temperature %s %5.1f<br/>", word, i + 1, settings.sensor[i].TempMode == 1 ? "below" : "above", settings.sensor[i].Temp);
+          word = "AND ";
+        }
+        if (settings.sensor[i].HumMode) {
+          dF.printf("%s sensor %d humidity %s %5.1f<br/>", word, i + 1, settings.sensor[i].HumMode == 1 ? "below" : "above", settings.sensor[i].Hum);
+          word = "AND ";
+        }
+        if (settings.sensor[i].DewMode) {
+          dF.printf("%s sensor %d temperature %s %5.1f<br/>", word, i + 1, settings.sensor[i].DewMode == 1 ? "below" : "above", settings.sensor[i].Dew);
+          word = "AND ";
+        }
+      }
+      if (settings.TempDiff) {
+        dF.printf("%s (sensor 1 temperature - sensor 2 temperature) %s %5.1f<br/>", word, settings.TempDiff == 1 ? "below" : "above", settings.Temp);
+        word = "AND ";
+      }
+      if (settings.HumDiff) {
+        dF.printf("%s (sensor 1 humidity - sensor 2 humidity) %s %5.1f<br/>", word, settings.HumDiff == 1 ? "below" : "above", settings.Hum);
+        word = "AND ";
+      }
+      if (settings.DewDiff) {
+        dF.printf("%s (sensor 1 dew point - sensor 2 dew point) %s %5.1f<br/>", word, settings.DewDiff == 1 ? "below" : "above", settings.Dew);
+        word = "AND ";
+      }
+      if (!strcmp(word, "IF ")) {
+        dF.print("no restriction<br/>\n");
+      }
+      dF.print("</td></tr>\n");
+      dF.print("</table>\n");
+      // HTML trailer
+      dF.print("<hr/></body></html>\n");
+      dF.close();
+    } else {
+      LOG_E("Could not write 'device.html' - %d\n", dF.getWriteError());
+    }
     // Set up Modbus server
     // *****************
 
@@ -1019,11 +1075,8 @@ void setup() {
     WiFi.softAP(AP_SSID, "Maelstrom");
 
     // Set up open web server in CONFIG mode
-    HTMLserver.enableCORS(true);
     HTMLserver.on("/sub", handleSet);
     HTMLserver.on("/restart", handleRestart);
-    HTMLserver.on("/", handleDevice);
-    HTMLserver.serveStatic("/", LittleFS, "/");
 
     // Signal config mode
     signalLED.start(CONFIG_BLINK);
@@ -1032,6 +1085,9 @@ void setup() {
 
   // Set up mode independent web server callbacks
   HTMLserver.onNotFound(notFound);
+  HTMLserver.on("/", handleDevice);
+  HTMLserver.enableCORS(true);
+  HTMLserver.serveStatic("/", LittleFS, "/");
   
   // Start web server
   HTMLserver.begin(80);
@@ -1076,6 +1132,7 @@ void loop() {
         S2LED.stop();
         targetLED.stop();
         mode = MANUAL;
+        registerEvent(ENTER_MAN);
       } else if (be == BE_DOUBLECLICK) {
         // No again, we caught a double click instead
         // Let the three device LEDs signal the switch logic calculations result
@@ -1240,6 +1297,7 @@ void loop() {
         checkSensor(DHT0, "DHT0");
         checkSensor(DHT1, "DHT1");
         mode = RUN;
+        registerEvent(EXIT_MAN);
       }
     }
   } else {

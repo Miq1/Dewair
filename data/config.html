@@ -1,6 +1,9 @@
 <!DOCTYPE html>
 <html>
-  <head> <title>Dewair configuration</title> </head>
+  <head> 
+    <title>Dewair configuration</title> 
+    <link rel="stylesheet" href="styles.css">
+  </head>
   <script>
   // Flad variables for the visibility of both sensor parts
   var R1an = false;
@@ -8,7 +11,7 @@
 
   // Inject form data by separate script
   const scriptTag = document.createElement("script");
-  scriptTag.src = "/set.js";
+  scriptTag.src = "set.js";
   document.head.appendChild(scriptTag);
 
   // As soon as page is loaded, attach triggers and inject data
@@ -152,11 +155,6 @@
   }
 
   </script>
-  <style>
-    * { font-family: sans-serif;}
-    input { font-size: large; font-family: monospace;}
-    th, td { padding: 10px; }
-  </style>
   <body>
     <h1>Dewair configuration</h1>
     <OBJECT data="device.html">
@@ -166,7 +164,7 @@
       <tr>
         <td>
           <form method="post" name="F" action="/sub">
-            <h3>Basic data</h3>
+            <h3>Basic data (<bold>required</bold>)</h3>
             <table style="background-color: #e6d380;" width="100%">
               <tr align="left">
                 <th>Device name</th>
@@ -400,7 +398,8 @@
               </table>
             </div>
             <div>
-              <input type="submit" value="SAVE">
+              <p>&nbsp;</p>
+              <input type="submit" value="SAVE" class="button">
             </div>
           </form>
         </td>
