@@ -1,6 +1,6 @@
 * { font-family: sans-serif;}
 input { font-size: large; font-family: monospace;}
-th, td { padding: 10px; }
+th, td { padding: 4px; }
 .button {
     background-color: #4CAF50; /* Green */
     border: none;

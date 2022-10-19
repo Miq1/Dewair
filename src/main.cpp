@@ -53,8 +53,8 @@ uint32_t INTERVAL_DHT = 20000;
 ESP8266WebServer HTMLserver(80);
 #define SET_JS "/set.js"
 #define CONFIG_HTML "/config.html"
-#define DEVICE_HTML "/device.html"
 #define SETTINGS "/settings.bin"
+String deviceInfo(1024);
 
 // Target address for Modbus device
 struct ModbusTarget {
@@ -558,7 +558,8 @@ void switchTarget(bool onOff) {
 // Web server callbacks
 // Illegal page requested
 void notFound() {
-  String message = "File Not Found\n\n";
+  String message(256);
+  message = "File Not Found\n\n";
   message += "URI: ";
   message += HTMLserver.uri();
   message += "\nMethod: ";
@@ -568,6 +569,7 @@ void notFound() {
   message += "\n";
   for (uint8_t i = 0; i < HTMLserver.args(); i++) { message += " " + HTMLserver.argName(i) + ": " + HTMLserver.arg(i) + "\n"; }
   HTMLserver.send(404, "text/plain", message);
+  LOG_V("404 message=%d\n", message.length());
   HTMLserver.client().stop();
 }
 
@@ -579,7 +581,9 @@ void handleRestart() {
 
 // Put out device status
 void handleDevice() {
-  String message;
+  String message(4096);
+  const uint8_t BUFLEN(255);
+  char buf[BUFLEN];
   message = "<!DOCTYPE html><html><header><link rel=\"stylesheet\" href=\"/styles.css\"><title>";
   if (*settings.deviceName) {
     message += settings.deviceName;
@@ -587,16 +591,34 @@ void handleDevice() {
     message += AP_SSID;
   }
   message += " status</title></header><body>\n";
-  message += "<OBJECT data=\"/device.html\" width=\"100%\" height=\"50%\"> Warning: device.html could not be included. </OBJECT>\n<div>";
-  message += "<h3>Events</h3><table>";
-  char buf[64];
+  // Add in deviceinfo
+  message += deviceInfo;
+  // In RUN mode, print out current measurements
+  if (mode == RUN) {
+    message += "<table><tr><th align=\"left\">Sensor</th><th>Temperature</th><th>Humidity</th><th>Dew point</th><th>Health</th></tr>\n";
+    for (uint8_t i = 0; i < 2; i++) {
+      mySensor& sensor = (i == 0) ? DHT0 : DHT1;
+      if (settings.sensor[i].type != DEV_NONE) {
+        snprintf(buf, BUFLEN, "<tr><th align=\"left\">%d</th><td>%5.1f&#8451;</td><td>%5.1f&#37;</td><td>%5.1f&#8451;</td><td>%04X</td></tr>\n",
+          i, 
+          sensor.th.temperature,
+          sensor.th.humidity,
+          sensor.dewPoint,
+          sensor.healthTracker
+        );
+        message += buf;
+      }
+    }
+    message += "</table><br/>\n";
+  }
+  message += "<div><h3>Events</h3><table>";
   for (auto e : events) {
     uint8_t ev = (e >> 11) & 0x1F;
     uint8_t hi = (e >> 6) & 0x1F;
     uint8_t lo = e & 0x3F;
     if (ev != NO_EVENT) {
-      char sep = (e == BOOT_DATE || e == DATE_CHANGE) ? '.' : ':';
-      snprintf(buf, 64, "<tr><th align=\"left\">%s</th><td>%02d%c%02d.</td></tr>\n", eventname[ev], hi, sep, lo);
+      char sep = (ev == BOOT_DATE || ev == DATE_CHANGE) ? '.' : ':';
+      snprintf(buf, BUFLEN, "<tr><th align=\"left\">%s</th><td>%02d%c%02d</td></tr>\n", eventname[ev], hi, sep, lo);
       message += buf;
     }
   }
@@ -607,6 +629,7 @@ void handleDevice() {
   }
   message += "</body></html>";
   HTMLserver.send(200, "text/html", message);
+  LOG_V("device message=%d\n", message.length());
   HTMLserver.client().stop();
 }
 
@@ -1013,58 +1036,99 @@ void setup() {
     HTMLserver.on("/sub", notFound);
     HTMLserver.on("/restart", notFound);
 
-    // Create device info file
-    File dF = LittleFS.open("/device.html", "w");
-    if (dF) {
-      // HTML lead-in
-      dF.print("<!DOCTYPE html> <html><header> <link rel=\"stylesheet\" href=\"styles.css\"> </header> <body><hr/>\n");
-      dF.printf("<h2>%s status</h2>\n", *settings.deviceName ? settings.deviceName : AP_SSID);
-      dF.print("<table>\n");
-      dF.print("<tr align=\"left\"><th>Version</th><td>" VERSION "</td></tr>\n");
-      dF.print("<tr align=\"left\"><th>Build</th><td>" BUILD_TIMESTAMP "</td></tr>\n");
-      dF.printf("<tr align=\"left\"><th>Restarts</th><td>%d</td>\n", settings.restarts);
-      dF.printf("<tr align=\"left\"><th>Master switch</th><td>%s</td>\n", settings.masterSwitch ? "ON" : "OFF");
-      dF.printf("<tr align=\"left\"><th>Measuring every</th><td>%d seconds</td>\n", settings.measuringInterval);
-      dF.printf("<tr align=\"left\"><th>Switching on</th><td>%d consecutive identical evaluations</td>\n", settings.hystSteps);
-      dF.print("<tr align=\"left\"><th>Switch conditions</th><td>");
-      const char *word = "IF ";
-      for (uint8_t i = 0; i < 2; i++) {
+    // Create device info string
+    const uint8_t BUFLEN(200);
+    char buf[200];
+    // HTML lead-in
+    deviceInfo = "<!DOCTYPE html> <html><header> <link rel=\"stylesheet\" href=\"styles.css\"> </header> <body><hr/>\n";
+    snprintf(buf, BUFLEN, "<h2>%s status</h2>\n", *settings.deviceName ? settings.deviceName : AP_SSID);
+    deviceInfo += buf;
+    // SW version etc
+    deviceInfo += "<table>\n";
+    deviceInfo += "<tr align=\"left\"><th>Version</th><td>" VERSION "</td></tr>\n";
+    deviceInfo += "<tr align=\"left\"><th>Build</th><td>" BUILD_TIMESTAMP "</td></tr>\n";
+    snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Restarts</th><td>%d</td>\n", settings.restarts);
+    deviceInfo += buf;
+    // Master switch state
+    snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Master switch</th><td>%s</td>\n", settings.masterSwitch ? "ON" : "OFF");
+    deviceInfo += buf;
+    // Hysteresis settings
+    snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Measuring every</th><td>%d seconds</td>\n", settings.measuringInterval);
+    deviceInfo += buf;
+    // Target
+    deviceInfo += "<tr align=\"left\"><th>Target</th><td>";
+    if (settings.Target == 0) { 
+      deviceInfo += "none"; 
+    } else if (settings.Target == 1) { 
+      deviceInfo += "connected locally"; 
+    } else { 
+      deviceInfo += "Modbus TCP"; 
+    }
+    deviceInfo += "</td></tr>\n";
+    // Sensors
+    for (uint8_t i = 0; i < 2; i++) {
+      deviceInfo += "<tr align=\"left\"><th>Sensor ";
+      deviceInfo += i;
+      deviceInfo += "</th><td>";
+      if (settings.sensor[i].type == 0) { 
+        deviceInfo += "none"; 
+      } else if (settings.sensor[i].type == 1) { 
+        deviceInfo += "connected locally"; 
+      } else { 
+        deviceInfo += "Modbus TCP"; 
+      }
+      deviceInfo += "</td></tr>\n";
+    }
+    // Conditions for switching
+    snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Switching on</th><td>%d consecutive identical evaluations</td>\n", settings.hystSteps);
+    deviceInfo += buf;
+    deviceInfo += "<tr align=\"left\"><th>Switch conditions</th><td>";
+    const char *word = "IF ";
+    for (uint8_t i = 0; i < 2; i++) {
+      if (settings.sensor[i].type) {
         if (settings.sensor[i].TempMode) {
-          dF.printf("%s sensor %d temperature %s %5.1f<br/>", word, i + 1, settings.sensor[i].TempMode == 1 ? "below" : "above", settings.sensor[i].Temp);
+          snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", word, i, settings.sensor[i].TempMode == 1 ? "below" : "above", settings.sensor[i].Temp);
+          deviceInfo += buf;
           word = "AND ";
         }
         if (settings.sensor[i].HumMode) {
-          dF.printf("%s sensor %d humidity %s %5.1f<br/>", word, i + 1, settings.sensor[i].HumMode == 1 ? "below" : "above", settings.sensor[i].Hum);
+          snprintf(buf, BUFLEN, "%s S%d humidity %s %5.1f<br/>", word, i, settings.sensor[i].HumMode == 1 ? "below" : "above", settings.sensor[i].Hum);
+          deviceInfo += buf;
           word = "AND ";
         }
         if (settings.sensor[i].DewMode) {
-          dF.printf("%s sensor %d temperature %s %5.1f<br/>", word, i + 1, settings.sensor[i].DewMode == 1 ? "below" : "above", settings.sensor[i].Dew);
+          snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", word, i, settings.sensor[i].DewMode == 1 ? "below" : "above", settings.sensor[i].Dew);
+          deviceInfo += buf;
           word = "AND ";
         }
       }
+    }
+    if (settings.sensor[0].type && settings.sensor[1].type) {
       if (settings.TempDiff) {
-        dF.printf("%s (sensor 1 temperature - sensor 2 temperature) %s %5.1f<br/>", word, settings.TempDiff == 1 ? "below" : "above", settings.Temp);
+        snprintf(buf, BUFLEN, "%s (S0 temperature - S1 temperature) %s %5.1f<br/>", word, settings.TempDiff == 1 ? "below" : "above", settings.Temp);
+        deviceInfo += buf;
         word = "AND ";
       }
       if (settings.HumDiff) {
-        dF.printf("%s (sensor 1 humidity - sensor 2 humidity) %s %5.1f<br/>", word, settings.HumDiff == 1 ? "below" : "above", settings.Hum);
+        snprintf(buf, BUFLEN, "%s (S0 humidity - S1 humidity) %s %5.1f<br/>", word, settings.HumDiff == 1 ? "below" : "above", settings.Hum);
+        deviceInfo += buf;
         word = "AND ";
       }
       if (settings.DewDiff) {
-        dF.printf("%s (sensor 1 dew point - sensor 2 dew point) %s %5.1f<br/>", word, settings.DewDiff == 1 ? "below" : "above", settings.Dew);
+        snprintf(buf, BUFLEN, "%s (S0 dew point - S1 dew point) %s %5.1f<br/>", word, settings.DewDiff == 1 ? "below" : "above", settings.Dew);
+        deviceInfo += buf;
         word = "AND ";
       }
-      if (!strcmp(word, "IF ")) {
-        dF.print("no restriction<br/>\n");
-      }
-      dF.print("</td></tr>\n");
-      dF.print("</table>\n");
-      // HTML trailer
-      dF.print("<hr/></body></html>\n");
-      dF.close();
-    } else {
-      LOG_E("Could not write 'device.html' - %d\n", dF.getWriteError());
     }
+    if (!strcmp(word, "IF ")) {
+      deviceInfo += "no restriction<br/>\n";
+    }
+    deviceInfo += "</td></tr>\n";
+    deviceInfo += "</table>\n";
+    // HTML trailer
+    deviceInfo += "<hr/></body></html>\n";
+    LOG_V("deviceInfo=%d\n", deviceInfo.length());
+
     // Set up Modbus server
     // *****************
 
