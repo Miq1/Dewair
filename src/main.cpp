@@ -18,9 +18,6 @@
 #define LOCAL_LOG_LEVEL LOG_LEVEL_VERBOSE
 #include "Logging.h"
 
-// To do:
-// Modbus
-
 // Pin definitions
 #define SENSOR_0 D2
 #define SENSOR_1 D1
@@ -322,6 +319,8 @@ RingBuf<uint16_t> events(MAXEVENT);
 
 // Server for own data
 ModbusServerTCPasync MBserver;
+// Modbus server ID
+const uint8_t MYSID(1);
 // Client to access switch and sensor sources
 ModbusClientTCPasync MBclient(IPAddress(0, 0, 0, 0), 502);
 
@@ -430,6 +429,198 @@ void registerEvent(S_EVENT ev) {
   }
 }
 
+// Helper function to pack some Modbus register values
+uint16_t makeCompact(uint8_t type, uint16_t value) {
+  return ((type & 0x03)  << 14) | (value & 0x3FFF);
+}
+
+// Modbus server READ_HOLD_REGISTER callback
+ModbusMessage FC03(ModbusMessage request) {
+  ModbusMessage response;          // returned response message
+
+  uint16_t address = 0;
+  uint16_t words = 0;
+
+  // Get start address and length for read
+  request.get(2, address);
+  request.get(4, words);
+
+  // Valid address etc.?
+  if (address && words && address + words <= 65 + MAXEVENT) {
+    // Yes, looks good. Prepare response header
+    response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
+    // Temporary buffer for uint16_t manipulations
+    uint16_t uVal;
+    // We may need the float measurement values, so prepare a Modbus-compliant format
+    ModbusMessage fVal;
+    if (address <= 13 && 2 <= address + words - 1) {
+      fVal.add(DHT0.th.temperature);
+      fVal.add(DHT0.th.humidity);
+      fVal.add(DHT0.dewPoint);
+      fVal.add(DHT1.th.temperature);
+      fVal.add(DHT1.th.humidity);
+      fVal.add(DHT1.dewPoint);
+    }
+
+    // Loop over all requested addresses
+    for (uint16_t a = address; a < address + words; a++) {
+      switch (a) {
+      case  1: // Master switch
+        uVal = settings.masterSwitch ? 1 : 0;
+        response.add(uVal);
+        break;
+      case  2: // S0 temperature upper word
+      case  3: // S0 temperature lower word
+      case  4: // S0 humidity upper word
+      case  5: // S0 humidity lower word
+      case  6: // S0 dew point upper word
+      case  7: // S0 dew point lower word
+      case  8: // S1 temperature upper word
+      case  9: // S1 temperature lower word
+      case 10: // S1 humidity upper word
+      case 11: // S1 humidity lower word
+      case 12: // S1 dew point upper word
+      case 13: // S1 dew point lower word
+        // Get word from prepared buffer
+        fVal.get((a - 2) * 2, uVal);
+        response.add(uVal);
+        break;
+      case 14: // Target switch state
+        uVal = switchedON ? 1 : 0;
+        response.add(uVal);
+        break;
+      case 15: // restart count
+        response.add(settings.restarts);
+        break;
+      case 16: // run time since boot
+        response.add(runTime);
+        break;
+      case 17: // S0 health
+        response.add(DHT0.healthTracker);
+        break;
+      case 18: // S1 health
+        response.add(DHT1.healthTracker);
+        break;
+      case 19: // target health
+        response.add(targetHealth);
+        break;
+      case 20: // measurement interval
+        response.add(settings.measuringInterval);
+        break;
+      case 21: // hysteresis steps
+        response.add((uint16_t)settings.hystSteps);
+        break;
+      case 22: // S0 type
+        response.add((uint16_t)settings.sensor[0].type);
+        break;
+      case 23: // S0 Modbus IP bytes 0, 1
+        uVal = (settings.sensor[0].IP[0] << 8) | settings.sensor[0].IP[1];
+        response.add(uVal);
+        break;
+      case 24: // S0 Modbus IP bytes 2, 3
+        uVal = (settings.sensor[0].IP[2] << 8) | settings.sensor[0].IP[3];
+        response.add(uVal);
+        break;
+      case 25: // S0 Modbus port
+        response.add(settings.sensor[0].port);
+        break;
+      case 26: // S0 Modbus SID and slot
+        uVal = (settings.sensor[0].SID << 8) | settings.sensor[0].slot;
+        response.add(uVal);
+        break;
+      case 27: // S0 temperature condition and value
+        uVal = int(settings.sensor[0].Temp * 10) + 2048;
+        response.add(makeCompact(settings.sensor[0].TempMode, uVal));
+        break;
+      case 28: // S0 humidity condition and value
+        uVal = int(settings.sensor[0].Hum * 10) + 2048;
+        response.add(makeCompact(settings.sensor[0].HumMode, uVal));
+        break;
+      case 29: // S0 dew point condition and value
+        uVal = int(settings.sensor[0].Dew * 10) + 2048;
+        response.add(makeCompact(settings.sensor[0].DewMode, uVal));
+        break;
+      case 30: // S1 type
+        response.add((uint16_t)settings.sensor[1].type);
+        break;
+      case 31: // S1 Modbus IP bytes 0, 1
+        uVal = (settings.sensor[1].IP[0] << 8) | settings.sensor[1].IP[1];
+        response.add(uVal);
+        break;
+      case 32: // S1 Modbus IP bytes 2, 3
+        uVal = (settings.sensor[1].IP[2] << 8) | settings.sensor[1].IP[3];
+        response.add(uVal);
+        break;
+      case 33: // S1 Modbus port
+        response.add(settings.sensor[1].port);
+        break;
+      case 34: // S1 Modbus SID and slot
+        uVal = (settings.sensor[1].SID << 8) | settings.sensor[1].slot;
+        response.add(uVal);
+        break;
+      case 35: // S1 temperature condition and value
+        uVal = int(settings.sensor[1].Temp * 10) + 2048;
+        response.add(makeCompact(settings.sensor[1].TempMode, uVal));
+        break;
+      case 36: // S1 humidity condition and value
+        uVal = int(settings.sensor[1].Hum * 10) + 2048;
+        response.add(makeCompact(settings.sensor[1].HumMode, uVal));
+        break;
+      case 37: // S1 dew point condition and value
+        uVal = int(settings.sensor[1].Dew * 10) + 2048;
+        response.add(makeCompact(settings.sensor[1].DewMode, uVal));
+        break;
+      case 38: // Target type
+        uVal = settings.Target;
+        response.add(uVal);
+        break;
+      case 39: // target Modbus IP bytes 0, 1
+        uVal = (settings.targetIP[0] << 8) | settings.targetIP[1];
+        response.add(uVal);
+        break;
+      case 40: // target Modbus IP bytes 2, 3
+        uVal = (settings.targetIP[2] << 8) | settings.targetIP[3];
+        response.add(uVal);
+        break;
+      case 41: // target Modbus port
+        response.add(settings.targetPort);
+        break;
+      case 42: // target Modbus SID
+        uVal = settings.targetSID << 8;
+        response.add(uVal);
+        break;
+      case 43: // combo temperature condition type and value
+        uVal = int(settings.Temp * 10) + 2048;
+        response.add(makeCompact(settings.TempDiff, uVal));
+        break;
+      case 44: // combo humidity condition type and value
+        uVal = int(settings.Hum * 10) + 2048;
+        response.add(makeCompact(settings.HumDiff, uVal));
+        break;
+      case 45: // combo dew point condition type and value
+        uVal = int(settings.Dew * 10) + 2048;
+        response.add(makeCompact(settings.DewDiff, uVal));
+        break;
+      // reserved register numbers left out
+      case 64: // event slot count
+        response.add((uint16_t)MAXEVENT);
+        break;
+      case 65 ... (65 + MAXEVENT - 1): // Events
+        response.add(events[a - 65]);
+        break;
+      default: // Reserve registers
+        response.add((uint16_t)0);
+        break;
+      }
+    }
+  } else {
+    // No, addressable registers were missed in a way. Return error message
+    response.setError(request.getServerID(), request.getFunctionCode(), ILLEGAL_DATA_ADDRESS);
+    LOG_V("Address error: addr=%d words=%d\n", address, words);
+  }
+  return response;
+}
+
 // -----------------------------------------------------------------------------
 // Setup WiFi in RUN mode
 // -----------------------------------------------------------------------------
@@ -445,8 +636,7 @@ void wifiSetup(const char *hostname) {
   }
 
   // Connect
-  // WiFi.begin(settings.WiFiSSID, settings.WiFiPASS);
-  WiFi.begin(MYSSID, MYPASS);
+  WiFi.begin(settings.WiFiSSID, settings.WiFiPASS);
 
   // Wait for connection. ==> We will hang here in RUN mode forever without a WiFi!
   while (WiFi.status() != WL_CONNECTED) {
@@ -546,8 +736,8 @@ void switchTarget(bool onOff) {
         ModbusError me(e);
         LOG_E("Error sending 0x2009 request: %02X - %s\n", e, (const char *)me);
       }
+      LOG_V("Switch request sent\n");
     }
-    LOG_V("Switch request sent\n");
     // Register event
     registerEvent(onOff ? TARGET_ON : TARGET_OFF);
   }
@@ -611,6 +801,8 @@ void handleDevice() {
     }
     message += "</table><br/>\n";
   }
+  snprintf(buf, BUFLEN, "<div><b>Run time since boot:</b> %d:%02d</div>\n", runTime / 60, runTime % 60);
+  message += buf;
   message += "<div><h3>Events</h3><table>";
   for (auto e : events) {
     uint8_t ev = (e >> 11) & 0x1F;
@@ -1028,6 +1220,9 @@ void setup() {
     // Register response handler
     MBclient.onResponseHandler(handleResponse);
 
+    // Register Modbus server functions
+    MBserver.registerWorker(MYSID, READ_HOLD_REGISTER, FC03);
+
     // Set up web server in RUN mode
     // need to exclude the config files in RUN mode!
     HTMLserver.on("/config.html", notFound);
@@ -1129,8 +1324,8 @@ void setup() {
     deviceInfo += "<hr/></body></html>\n";
     LOG_V("deviceInfo=%d\n", deviceInfo.length());
 
-    // Set up Modbus server
-    // *****************
+    // Start Modbus server
+    MBserver.start(502, 4, 2000);
 
     signalLED.start(TARGET_OFF_BLINK);
   } else {
