@@ -113,8 +113,8 @@ mySensor DHT0(S1LED, 0);
 mySensor DHT1(S2LED, 1);
 
 // Choice list for target and sensor devices
-enum DEVICEMODE : uint8_t { DEV_NONE=0, DEV_LOCAL, DEV_MODBUS };
-enum DEVICECOND : uint8_t { DEVC_NONE=0, DEVC_LESS, DEVC_GREATER };
+enum DEVICEMODE : uint8_t { DEV_NONE=0, DEV_LOCAL, DEV_MODBUS, DEV_RESERVED };
+enum DEVICECOND : uint8_t { DEVC_NONE=0, DEVC_LESS, DEVC_GREATER, DEVC_RESERVED };
 class PORTNUM {
 protected:
   uint16_t value;
@@ -429,6 +429,115 @@ void registerEvent(S_EVENT ev) {
   }
 }
 
+// writeDeviceInfo: update Web page data on device settings
+void writeDeviceInfo() {
+  const uint8_t BUFLEN(200);
+  char buf[200];
+  // HTML lead-in
+  deviceInfo = "<!DOCTYPE html> <html><header> <link rel=\"stylesheet\" href=\"styles.css\"> </header> <body><hr/>\n";
+  snprintf(buf, BUFLEN, "<h2>%s status</h2>\n", *settings.deviceName ? settings.deviceName : AP_SSID);
+  deviceInfo += buf;
+  // SW version etc
+  deviceInfo += "<table>\n";
+  deviceInfo += "<tr align=\"left\"><th>Version</th><td>" VERSION "</td></tr>\n";
+  deviceInfo += "<tr align=\"left\"><th>Build</th><td>" BUILD_TIMESTAMP "</td></tr>\n";
+  snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Restarts</th><td>%d</td>\n", settings.restarts);
+  deviceInfo += buf;
+  // Master switch state
+  snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Master switch</th><td>%s</td>\n", settings.masterSwitch ? "ON" : "OFF");
+  deviceInfo += buf;
+  // Hysteresis settings
+  snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Measuring every</th><td>%d seconds</td>\n", settings.measuringInterval);
+  deviceInfo += buf;
+  // Target
+  deviceInfo += "<tr align=\"left\"><th>Target</th><td>";
+  switch (settings.Target) { 
+  case DEV_NONE:
+    deviceInfo += "none"; 
+    break;
+  case DEV_LOCAL:
+    deviceInfo += "connected locally"; 
+    break;
+  case DEV_MODBUS:
+    deviceInfo += "Modbus TCP"; 
+    break;
+  case DEV_RESERVED:
+    deviceInfo += "reserved"; 
+    break;
+  }
+  deviceInfo += "</td></tr>\n";
+  // Sensors
+  for (uint8_t i = 0; i < 2; i++) {
+    deviceInfo += "<tr align=\"left\"><th>Sensor ";
+    deviceInfo += i;
+    deviceInfo += "</th><td>";
+    switch (settings.sensor[i].type) { 
+    case DEV_NONE:
+      deviceInfo += "none"; 
+      break;
+    case DEV_LOCAL:
+      deviceInfo += "connected locally"; 
+      break;
+    case DEV_MODBUS:
+      deviceInfo += "Modbus TCP"; 
+      break;
+    case DEV_RESERVED:
+      deviceInfo += "reserved"; 
+      break;
+    }
+    deviceInfo += "</td></tr>\n";
+  }
+  // Conditions for switching
+  snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Switching on</th><td>%d consecutive identical evaluations</td>\n", settings.hystSteps);
+  deviceInfo += buf;
+  deviceInfo += "<tr align=\"left\"><th>Switch conditions</th><td>";
+  const char *word = "IF ";
+  for (uint8_t i = 0; i < 2; i++) {
+    if (settings.sensor[i].type) {
+      if (settings.sensor[i].TempMode) {
+        snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", word, i, settings.sensor[i].TempMode == 1 ? "below" : "above", settings.sensor[i].Temp);
+        deviceInfo += buf;
+        word = "AND ";
+      }
+      if (settings.sensor[i].HumMode) {
+        snprintf(buf, BUFLEN, "%s S%d humidity %s %5.1f<br/>", word, i, settings.sensor[i].HumMode == 1 ? "below" : "above", settings.sensor[i].Hum);
+        deviceInfo += buf;
+        word = "AND ";
+      }
+      if (settings.sensor[i].DewMode) {
+        snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", word, i, settings.sensor[i].DewMode == 1 ? "below" : "above", settings.sensor[i].Dew);
+        deviceInfo += buf;
+        word = "AND ";
+      }
+    }
+  }
+  if (settings.sensor[0].type && settings.sensor[1].type) {
+    if (settings.TempDiff) {
+      snprintf(buf, BUFLEN, "%s (S0 temperature - S1 temperature) %s %5.1f<br/>", word, settings.TempDiff == 1 ? "below" : "above", settings.Temp);
+      deviceInfo += buf;
+      word = "AND ";
+    }
+    if (settings.HumDiff) {
+      snprintf(buf, BUFLEN, "%s (S0 humidity - S1 humidity) %s %5.1f<br/>", word, settings.HumDiff == 1 ? "below" : "above", settings.Hum);
+      deviceInfo += buf;
+      word = "AND ";
+    }
+    if (settings.DewDiff) {
+      snprintf(buf, BUFLEN, "%s (S0 dew point - S1 dew point) %s %5.1f<br/>", word, settings.DewDiff == 1 ? "below" : "above", settings.Dew);
+      deviceInfo += buf;
+      word = "AND ";
+    }
+  }
+  if (!strcmp(word, "IF ")) {
+    deviceInfo += "no restriction<br/>\n";
+  }
+  deviceInfo += "</td></tr>\n";
+  deviceInfo += "</table>\n";
+  // HTML trailer
+  deviceInfo += "<hr/></body></html>\n";
+  LOG_V("deviceInfo=%d\n", deviceInfo.length());
+}
+
 // Helper function to pack some Modbus register values
 uint16_t makeCompact(uint8_t type, uint16_t value) {
   return ((type & 0x03)  << 14) | (value & 0x3FFF);
@@ -621,6 +730,260 @@ ModbusMessage FC03(ModbusMessage request) {
   return response;
 }
 
+// writeRegister: helper function to check a register address and data
+//    if it can be written. Write it, if permissible
+Error writeRegister(uint16_t address, uint16_t value) {
+  Error rc = SUCCESS;              // Function return value
+
+  // Check address range
+  if (address && address <= 65 + MAXEVENT) {
+    // Looks okay, address exists
+
+    // Calculate sensor slot, if needed
+    uint8_t sensor = (address >= 22 && address <= 29) ? 0 : 1;
+
+    // Calculate DEVICECOND and comparison values, in case we need it.
+    DEVICECOND dc = (DEVICECOND)(((value >> 14)) & 0x3);
+    float fV = ((value & 0x3FF) - 2048) / 10.0;
+
+    // Examine address
+    switch (address) {
+    case 1: // Master switch
+      settings.masterSwitch = (value ? true : false);
+      break;
+    case 20: // Measuring interval
+      // In range?
+      if (value >= 10 && value <= 3600) {
+        settings.measuringInterval = value;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 21: // Hysteresis steps
+      // In range?
+      if (value >= 1 && value <= 16) {
+        settings.hystSteps = (value == 16 ? 0 : value);
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 22: // S0 type
+    case 30: // S1 
+      if (value < DEV_RESERVED) {
+        settings.sensor[sensor].type = (DEVICEMODE)value;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 23: // S0 Modbus IP bytes 0, 1
+    case 31: // S1 
+      settings.sensor[sensor].IP[0] = (value >> 8) & 0xFF;
+      settings.sensor[sensor].IP[1] = value & 0xFF;
+      break;
+    case 24: // S0 Modbus IP bytes 2, 3
+    case 32: // S1 
+      settings.sensor[sensor].IP[2] = (value >> 8) & 0xFF;
+      settings.sensor[sensor].IP[3] = value & 0xFF;
+      break;
+    case 25: // S0 Modbus port
+    case 33: // S1 
+      if (value) {
+        settings.sensor[sensor].port = value;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 26: // S0 Modbus SID and slot
+    case 34: // S1 
+      if (value) {
+        uint8_t SID = (value >> 8) & 0xFF;
+        uint8_t slot = value & 0xFF;
+        if (SID && SID <= 247 && slot < 2) {
+          settings.sensor[sensor].SID = SID;
+          settings.sensor[sensor].slot = (slot ? true : false);
+        } else {
+          rc = ILLEGAL_DATA_VALUE;
+        }
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 27: // S0 temperature condition and value
+    case 35: // S1 
+      if (dc != DEVC_RESERVED) {
+        settings.sensor[sensor].TempMode = dc;
+        settings.sensor[sensor].Temp = fV;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 28: // S0 humidity condition and value
+    case 36: // S1 
+      if (dc != DEVC_RESERVED) {
+        settings.sensor[sensor].HumMode = dc;
+        settings.sensor[sensor].Hum = fV;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 29: // S0 dew point condition and value
+    case 37: // S1 
+      if (dc != DEVC_RESERVED) {
+        settings.sensor[sensor].DewMode = dc;
+        settings.sensor[sensor].Dew = fV;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 38: // Target type
+      if (value < DEV_RESERVED) {
+        settings.Target = (DEVICEMODE)value;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 39: // Target Modbus IP bytes 0, 1
+      settings.targetIP[0] = (value >> 8) & 0xFF;
+      settings.targetIP[1] = value & 0xFF;
+      break;
+    case 40: // Target Modbus IP bytes 2, 3
+      settings.targetIP[2] = (value >> 8) & 0xFF;
+      settings.targetIP[3] = value & 0xFF;
+      break;
+    case 41: // Target Modbus port
+      if (value) {
+        settings.targetPort = value;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 42: // Target Modbus SID
+      if (value) {
+        uint8_t SID = (value >> 8) & 0xFF;
+        if (SID && SID <= 247) {
+          settings.targetSID = SID;
+        } else {
+          rc = ILLEGAL_DATA_VALUE;
+        }
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 43: // Combo temperature condition and value
+      if (dc != DEVC_RESERVED) {
+        settings.TempDiff = dc;
+        settings.Temp = fV;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 44: // Combo humidity condition and value
+      if (dc != DEVC_RESERVED) {
+        settings.HumDiff = dc;
+        settings.Hum = fV;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 45: // Combo dew point condition and value
+      if (dc != DEVC_RESERVED) {
+        settings.DewDiff = dc;
+        settings.Dew = fV;
+      } else {
+        rc = ILLEGAL_DATA_VALUE;
+      }
+      break;
+    case 46 ... 63:  // spare registers for future extensions
+      rc = ILLEGAL_DATA_ADDRESS;
+      break;
+    default:
+      // If we end up here, the address is not write-enabled
+      rc = ILLEGAL_DATA_ADDRESS;
+    }
+  } else {
+    // address outside register range
+    rc = ILLEGAL_DATA_ADDRESS;
+  }
+  LOG_V("RC=%02X @%d: %04X\n", rc, address, value);
+  return rc;
+}
+
+// Modbus server WRITE_HOLD_REGISTER callback
+ModbusMessage FC06(ModbusMessage request) {
+  ModbusMessage response;          // returned response message
+  Error e = SUCCESS;               // Result value
+
+  uint16_t address = 0;
+  uint16_t value = 0;
+
+  // Get address and new register value
+  request.get(2, address);
+  request.get(4, value);
+
+  // Check address, data and write it in case all is OK
+  e = writeRegister(address, value);
+
+  // Generate appropriate response message
+  if (e == SUCCESS) {
+    response = ECHO_RESPONSE;
+    // We need to write the settings!
+    writeSettings();
+    writeDeviceInfo();
+  } else {
+    response.setError(request.getServerID(), request.getFunctionCode(), e);
+  }
+  return response;
+}
+
+// Modbus server WRITE_MULT_REGISTERS callback
+ModbusMessage FC10(ModbusMessage request) {
+  ModbusMessage response;          // returned response message
+  Error e = SUCCESS;               // Result value
+  SetData backup = settings;       // Keep rollback data in case of errors
+                                   // *** We are relying on default byte-wise copy here!
+
+  uint16_t address = 0;
+  uint16_t words = 0;
+  uint16_t offs = 2;
+
+  // Get address and new register value
+  offs = request.get(offs, address);
+  offs = request.get(offs, words);
+  // Skip length byte
+  offs++;
+
+  // Valid address etc.?
+  if (address && words && address + words <= 65 + MAXEVENT) {
+    // Yes. Loop over words to be written
+    for (uint16_t i = 0; i < words; i++) {
+      // Get next value
+      uint16_t value;
+      offs = request.get(offs, value);
+      // Check address, data and write it in case all is OK
+      e = writeRegister(address, value);
+      // Stop processing as soon as we have encountered an error
+      if (e != SUCCESS) {
+        break;
+      }
+    }
+  } else {
+    e = ILLEGAL_DATA_ADDRESS;
+  }
+
+  // Generate appropriate response message
+  if (e == SUCCESS) {
+    response.add(request.getServerID(), request.getFunctionCode(), address, words);
+    // We need to write the settings!
+    writeSettings();
+    writeDeviceInfo();
+  } else {
+    response.setError(request.getServerID(), request.getFunctionCode(), e);
+    // Roll back changes
+    settings = backup;
+  }
+  return response;
+}
+
 // -----------------------------------------------------------------------------
 // Setup WiFi in RUN mode
 // -----------------------------------------------------------------------------
@@ -728,7 +1091,8 @@ void switchTarget(bool onOff) {
     // State is different. Is it connected locally?
     if (settings.Target == DEV_LOCAL) {
       // Yes. Toggle target GPIO pin
-      digitalWrite(TARGET_PIN, onOff);
+      digitalWrite(TARGET_PIN, onOff ? HIGH : LOW);
+      switchedON = onOff;
     } else if (settings.Target == DEV_MODBUS) {
       MBclient.connect(settings.targetIP, settings.targetPort);
       Error e = MBclient.addRequest((uint32_t)0x2009, settings.targetSID, WRITE_HOLD_REGISTER, 1, onOff ? 1 : 0);
@@ -1083,6 +1447,10 @@ void setup() {
   Serial.print("Build: ");
   Serial.println(BUILD_TIMESTAMP);
 
+  // Shut down target pin
+  pinMode(TARGET_PIN, OUTPUT);
+  digitalWrite(TARGET_PIN, LOW);
+
   // (Try to) init sensors
   DHT0.sensor.setup(SENSOR_0, DHTesp::DHT22);
   DHT1.sensor.setup(SENSOR_1, DHTesp::DHT22);
@@ -1222,6 +1590,8 @@ void setup() {
 
     // Register Modbus server functions
     MBserver.registerWorker(MYSID, READ_HOLD_REGISTER, FC03);
+    MBserver.registerWorker(MYSID, WRITE_HOLD_REGISTER, FC06);
+    MBserver.registerWorker(MYSID, WRITE_MULT_REGISTERS, FC10);
 
     // Set up web server in RUN mode
     // need to exclude the config files in RUN mode!
@@ -1232,97 +1602,7 @@ void setup() {
     HTMLserver.on("/restart", notFound);
 
     // Create device info string
-    const uint8_t BUFLEN(200);
-    char buf[200];
-    // HTML lead-in
-    deviceInfo = "<!DOCTYPE html> <html><header> <link rel=\"stylesheet\" href=\"styles.css\"> </header> <body><hr/>\n";
-    snprintf(buf, BUFLEN, "<h2>%s status</h2>\n", *settings.deviceName ? settings.deviceName : AP_SSID);
-    deviceInfo += buf;
-    // SW version etc
-    deviceInfo += "<table>\n";
-    deviceInfo += "<tr align=\"left\"><th>Version</th><td>" VERSION "</td></tr>\n";
-    deviceInfo += "<tr align=\"left\"><th>Build</th><td>" BUILD_TIMESTAMP "</td></tr>\n";
-    snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Restarts</th><td>%d</td>\n", settings.restarts);
-    deviceInfo += buf;
-    // Master switch state
-    snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Master switch</th><td>%s</td>\n", settings.masterSwitch ? "ON" : "OFF");
-    deviceInfo += buf;
-    // Hysteresis settings
-    snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Measuring every</th><td>%d seconds</td>\n", settings.measuringInterval);
-    deviceInfo += buf;
-    // Target
-    deviceInfo += "<tr align=\"left\"><th>Target</th><td>";
-    if (settings.Target == 0) { 
-      deviceInfo += "none"; 
-    } else if (settings.Target == 1) { 
-      deviceInfo += "connected locally"; 
-    } else { 
-      deviceInfo += "Modbus TCP"; 
-    }
-    deviceInfo += "</td></tr>\n";
-    // Sensors
-    for (uint8_t i = 0; i < 2; i++) {
-      deviceInfo += "<tr align=\"left\"><th>Sensor ";
-      deviceInfo += i;
-      deviceInfo += "</th><td>";
-      if (settings.sensor[i].type == 0) { 
-        deviceInfo += "none"; 
-      } else if (settings.sensor[i].type == 1) { 
-        deviceInfo += "connected locally"; 
-      } else { 
-        deviceInfo += "Modbus TCP"; 
-      }
-      deviceInfo += "</td></tr>\n";
-    }
-    // Conditions for switching
-    snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Switching on</th><td>%d consecutive identical evaluations</td>\n", settings.hystSteps);
-    deviceInfo += buf;
-    deviceInfo += "<tr align=\"left\"><th>Switch conditions</th><td>";
-    const char *word = "IF ";
-    for (uint8_t i = 0; i < 2; i++) {
-      if (settings.sensor[i].type) {
-        if (settings.sensor[i].TempMode) {
-          snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", word, i, settings.sensor[i].TempMode == 1 ? "below" : "above", settings.sensor[i].Temp);
-          deviceInfo += buf;
-          word = "AND ";
-        }
-        if (settings.sensor[i].HumMode) {
-          snprintf(buf, BUFLEN, "%s S%d humidity %s %5.1f<br/>", word, i, settings.sensor[i].HumMode == 1 ? "below" : "above", settings.sensor[i].Hum);
-          deviceInfo += buf;
-          word = "AND ";
-        }
-        if (settings.sensor[i].DewMode) {
-          snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", word, i, settings.sensor[i].DewMode == 1 ? "below" : "above", settings.sensor[i].Dew);
-          deviceInfo += buf;
-          word = "AND ";
-        }
-      }
-    }
-    if (settings.sensor[0].type && settings.sensor[1].type) {
-      if (settings.TempDiff) {
-        snprintf(buf, BUFLEN, "%s (S0 temperature - S1 temperature) %s %5.1f<br/>", word, settings.TempDiff == 1 ? "below" : "above", settings.Temp);
-        deviceInfo += buf;
-        word = "AND ";
-      }
-      if (settings.HumDiff) {
-        snprintf(buf, BUFLEN, "%s (S0 humidity - S1 humidity) %s %5.1f<br/>", word, settings.HumDiff == 1 ? "below" : "above", settings.Hum);
-        deviceInfo += buf;
-        word = "AND ";
-      }
-      if (settings.DewDiff) {
-        snprintf(buf, BUFLEN, "%s (S0 dew point - S1 dew point) %s %5.1f<br/>", word, settings.DewDiff == 1 ? "below" : "above", settings.Dew);
-        deviceInfo += buf;
-        word = "AND ";
-      }
-    }
-    if (!strcmp(word, "IF ")) {
-      deviceInfo += "no restriction<br/>\n";
-    }
-    deviceInfo += "</td></tr>\n";
-    deviceInfo += "</table>\n";
-    // HTML trailer
-    deviceInfo += "<hr/></body></html>\n";
-    LOG_V("deviceInfo=%d\n", deviceInfo.length());
+    writeDeviceInfo();
 
     // Start Modbus server
     MBserver.start(502, 4, 2000);
@@ -1473,21 +1753,24 @@ void loop() {
               while (sensor.lockFlag) { delay(10); }
               // 1: Check temperature
               switch (settings.sensor[i].TempMode) {
-              case 0:  checks++; break;
-              case 1:  if (sensor.th.temperature < settings.sensor[i].Temp) { checks++; } break;
-              case 2:  if (sensor.th.temperature > settings.sensor[i].Temp) { checks++; } break;
+              case DEVC_NONE:  checks++; break;
+              case DEVC_LESS:  if (sensor.th.temperature < settings.sensor[i].Temp) { checks++; } break;
+              case DEVC_GREATER:  if (sensor.th.temperature > settings.sensor[i].Temp) { checks++; } break;
+              case DEVC_RESERVED: break;
               }
               // 2: Check humidity
               switch (settings.sensor[i].HumMode) {
-              case 0:  checks++; break;
-              case 1:  if (sensor.th.humidity < settings.sensor[i].Hum) { checks++; } break;
-              case 2:  if (sensor.th.humidity > settings.sensor[i].Hum) { checks++; } break;
+              case DEVC_NONE:  checks++; break;
+              case DEVC_LESS:  if (sensor.th.humidity < settings.sensor[i].Hum) { checks++; } break;
+              case DEVC_GREATER:  if (sensor.th.humidity > settings.sensor[i].Hum) { checks++; } break;
+              case DEVC_RESERVED: break;
               }
               // 3: Check dew point
               switch (settings.sensor[i].DewMode) {
-              case 0:  checks++; break;
-              case 1:  if (sensor.dewPoint < settings.sensor[i].Dew) { checks++; } break;
-              case 2:  if (sensor.dewPoint > settings.sensor[i].Dew) { checks++; } break;
+              case DEVC_NONE:  checks++; break;
+              case DEVC_LESS:  if (sensor.dewPoint < settings.sensor[i].Dew) { checks++; } break;
+              case DEVC_GREATER:  if (sensor.dewPoint > settings.sensor[i].Dew) { checks++; } break;
+              case DEVC_RESERVED: break;
               }
             }
           }
@@ -1499,21 +1782,24 @@ void loop() {
             // We have both sensors.
             // Check temperature
             switch (settings.TempDiff) {
-            case 0: cccond++; break;
-            case 1: if (DHT0.th.temperature - DHT1.th.temperature < settings.Temp) { cccond++; } break;
-            case 2: if (DHT0.th.temperature - DHT1.th.temperature > settings.Temp) { cccond++; } break;
+            case DEVC_NONE: cccond++; break;
+            case DEVC_LESS: if (DHT0.th.temperature - DHT1.th.temperature < settings.Temp) { cccond++; } break;
+            case DEVC_GREATER: if (DHT0.th.temperature - DHT1.th.temperature > settings.Temp) { cccond++; } break;
+            case DEVC_RESERVED: break;
             }
             // Check humidity
             switch (settings.HumDiff) {
-            case 0: cccond++; break;
-            case 1: if (DHT0.th.humidity - DHT1.th.humidity < settings.Hum) { cccond++; } break;
-            case 2: if (DHT0.th.humidity - DHT1.th.humidity > settings.Hum) { cccond++; } break;
+            case DEVC_NONE: cccond++; break;
+            case DEVC_LESS: if (DHT0.th.humidity - DHT1.th.humidity < settings.Hum) { cccond++; } break;
+            case DEVC_GREATER: if (DHT0.th.humidity - DHT1.th.humidity > settings.Hum) { cccond++; } break;
+            case DEVC_RESERVED: break;
             }
             // Check dew point
             switch (settings.DewDiff) {
-            case 0: cccond++; break;
-            case 1: if (DHT0.dewPoint - DHT1.dewPoint < settings.Dew) { cccond++; } break;
-            case 2: if (DHT0.dewPoint - DHT1.dewPoint > settings.Dew) { cccond++; } break;
+            case DEVC_NONE: cccond++; break;
+            case DEVC_LESS: if (DHT0.dewPoint - DHT1.dewPoint < settings.Dew) { cccond++; } break;
+            case DEVC_GREATER: if (DHT0.dewPoint - DHT1.dewPoint > settings.Dew) { cccond++; } break;
+            case DEVC_RESERVED: break;
             }
           }
           // All conditions met?
