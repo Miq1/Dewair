@@ -26,7 +26,7 @@
 #define S2STATUS_LED D4
 #define TARGET_LED D5
 #define SWITCH_PIN D3
-#define TARGET_PIN D7
+#define TARGET_PIN D8
 
 IPAddress myIP;               // local IP address
 char AP_SSID[24];             // AP SSID for config mode
@@ -960,7 +960,7 @@ ModbusMessage FC10(ModbusMessage request) {
       uint16_t value;
       offs = request.get(offs, value);
       // Check address, data and write it in case all is OK
-      e = writeRegister(address, value);
+      e = writeRegister(address + i, value);
       // Stop processing as soon as we have encountered an error
       if (e != SUCCESS) {
         break;
@@ -1565,9 +1565,15 @@ void setup() {
 
     // Start NTP
     configTime(MY_TZ, MY_NTP_SERVER); 
+
     // Register boot event
     registerEvent(BOOT_DATE);
     registerEvent(BOOT_TIME);
+
+    // Start up OTA server
+    ArduinoOTA.setHostname(settings.deviceName);  // Set OTA host name
+    ArduinoOTA.setPassword((const char *)settings.OTAPass);  // Set OTA password
+    ArduinoOTA.begin();               // start OTA scan
 
     // Calculate hysteresis mask
     uint8_t hw = settings.hystSteps == 0 ? 16 : settings.hystSteps;
@@ -1653,6 +1659,9 @@ void loop() {
 
   // Update mDNS
   MDNS.update();
+
+  // Check OTA requests
+  ArduinoOTA.handle();
 
   // RUN mode?
   if (mode == RUN) {
