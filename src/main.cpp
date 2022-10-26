@@ -540,7 +540,7 @@ void writeDeviceInfo() {
 
 // Helper function to pack some Modbus register values
 uint16_t makeCompact(uint8_t type, uint16_t value) {
-  return ((type & 0x03)  << 14) | (value & 0x3FFF);
+  return ((type & 0x03)  << 14) | (value & 0x0FFF);
 }
 
 // Modbus server READ_HOLD_REGISTER callback
@@ -744,12 +744,13 @@ Error writeRegister(uint16_t address, uint16_t value) {
 
     // Calculate DEVICECOND and comparison values, in case we need it.
     DEVICECOND dc = (DEVICECOND)(((value >> 14)) & 0x3);
-    float fV = ((value & 0x3FF) - 2048) / 10.0;
+    float fV = ((value & 0x0FFF) - 2048) / 10.0;
 
     // Examine address
     switch (address) {
     case 1: // Master switch
       settings.masterSwitch = (value ? true : false);
+      registerEvent(settings.masterSwitch ? MASTER_ON : MASTER_OFF);
       break;
     case 20: // Measuring interval
       // In range?
@@ -1252,6 +1253,9 @@ void handleSet() {
       case 4: // Master switch
         if ((uintval == 0) && settings.masterSwitch) { settings.masterSwitch = false; needsWrite = true; }
         if ((uintval != 0) && !settings.masterSwitch) { settings.masterSwitch = true; needsWrite = true; }
+        if (needsWrite) {
+          registerEvent(settings.masterSwitch ? MASTER_ON : MASTER_OFF);
+        }
         break;
       case 5: // hysteresis steps
         // Only accept valid values
