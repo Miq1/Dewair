@@ -1166,7 +1166,7 @@ void handleDevice() {
     }
     message += "</table><br/>\n";
   }
-  snprintf(buf, BUFLEN, "<div><b>Run time since boot:</b> %d:%02d</div>\n", runTime / 60, runTime % 60);
+  snprintf(buf, BUFLEN, "<div><b>Run time since boot:</b> %c%d:%02d</div>\n", runTime == 65535 ? '>' : ' ', runTime / 60, runTime % 60);
   message += buf;
   message += "<div><h3>Events</h3><table>";
   for (auto e : events) {
@@ -1704,8 +1704,10 @@ void loop() {
     // Is it time to advance the runtime counter?
     // (do a target state check as well)
     if (millis() - tick >= 60000) {
-      // Yes, increment it
-      runTime++;
+      // Yes, increment it as long as it did not hit the ceiling yet
+      if (runTime < 65535) {
+        runTime++;
+      }
       // Check for data change
       time_t now = time(NULL);
       tm tm;
