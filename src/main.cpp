@@ -377,7 +377,8 @@ bool takeMeasurement(mySensor& ms, const char *label) {
     if (sd.IP && sd.port && sd.SID) {
       // Yes. Set target and send a request
       // This will be asynchronous, so we may use the previous data for now.
-      MBclient.connect(sd.IP, sd.port);
+      // MBclient.connect(sd.IP, sd.port);
+      MBclient.setTarget(sd.IP, sd.port);
       Error e = MBclient.addRequest((uint32_t)(0x1008 | ms.sensor01), 
         sd.SID, 
         READ_HOLD_REGISTER,
@@ -1095,7 +1096,7 @@ void switchTarget(bool onOff) {
       digitalWrite(TARGET_PIN, onOff ? HIGH : LOW);
       switchedON = onOff;
     } else if (settings.Target == DEV_MODBUS) {
-      MBclient.connect(settings.targetIP, settings.targetPort);
+      MBclient.setTarget(settings.targetIP, settings.targetPort);
       Error e = MBclient.addRequest((uint32_t)0x2009, settings.targetSID, WRITE_HOLD_REGISTER, 1, onOff ? 1 : 0);
       if (e != SUCCESS) {
         ModbusError me(e);
@@ -1594,7 +1595,7 @@ void setup() {
     // Register state of Master switch
     registerEvent(settings.masterSwitch ? MASTER_ON : MASTER_OFF);
     // Shorten idle timeout for Modbus client connections
-    MBclient.setIdleTimeout(20000);
+    MBclient.setTimeout(20000);
     // Register response handler
     MBclient.onResponseHandler(handleResponse);
 
@@ -1721,7 +1722,7 @@ void loop() {
         // Is it a Modbus device?
         if (settings.Target == DEV_MODBUS) {
           // Yes, send a request
-          MBclient.connect(settings.targetIP, settings.targetPort);
+          MBclient.setTarget(settings.targetIP, settings.targetPort);
           Error e = MBclient.addRequest((uint32_t)0x2008, settings.targetSID, READ_HOLD_REGISTER, 1, 1);
           if (e != SUCCESS) {
             ModbusError me(e);
