@@ -128,7 +128,7 @@ public:
   // bufferSize: return the real length of the underlying data buffer.
   // Note that this is only sensible in a debug context!
   inline const uint8_t *bufferAdr() { return (uint8_t *)RB_buffer; }
-  inline const size_t bufferSize() { return RB_len * RB_elementSize; }
+  inline size_t bufferSize() { return RB_len * RB_elementSize; }
 
 protected:
   T *RB_buffer;           // The data buffer proper (twice the requested size)
@@ -394,7 +394,7 @@ bool RingBuf<T>::push_back(const T *data, size_t size) {
 template <typename T>
 const T RingBuf<T>::operator[](size_t index) {
   if (!valid()) return 0;
-  if (index >= 0 && index < size()) {
+  if (index < size()) {
     return *(RB_begin + index);
   }
   return 0;

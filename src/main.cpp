@@ -386,7 +386,7 @@ bool takeMeasurement(mySensor& ms, const char *label) {
         (uint16_t)6);
       if (e != SUCCESS) {
         ModbusError me(e);
-        LOG_E("Error requesting sensor %d - %s\n", ms.sensor01, (const char *)me);
+        LOG_E("Error requesting sensor %d/%s - %s\n", ms.sensor01, label, (const char *)me);
       } else {
         rc = true;
       }
@@ -492,44 +492,44 @@ void writeDeviceInfo() {
   snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Switching on</th><td>%d consecutive identical evaluations</td>\n", settings.hystSteps);
   deviceInfo += buf;
   deviceInfo += "<tr align=\"left\"><th>Switch conditions</th><td>";
-  const char *word = "IF ";
+  const char *leadIn = "IF ";
   for (uint8_t i = 0; i < 2; i++) {
     if (settings.sensor[i].type) {
       if (settings.sensor[i].TempMode) {
-        snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", word, i, settings.sensor[i].TempMode == 1 ? "below" : "above", settings.sensor[i].Temp);
+        snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", leadIn, i, settings.sensor[i].TempMode == 1 ? "below" : "above", settings.sensor[i].Temp);
         deviceInfo += buf;
-        word = "AND ";
+        leadIn = "AND ";
       }
       if (settings.sensor[i].HumMode) {
-        snprintf(buf, BUFLEN, "%s S%d humidity %s %5.1f<br/>", word, i, settings.sensor[i].HumMode == 1 ? "below" : "above", settings.sensor[i].Hum);
+        snprintf(buf, BUFLEN, "%s S%d humidity %s %5.1f<br/>", leadIn, i, settings.sensor[i].HumMode == 1 ? "below" : "above", settings.sensor[i].Hum);
         deviceInfo += buf;
-        word = "AND ";
+        leadIn = "AND ";
       }
       if (settings.sensor[i].DewMode) {
-        snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", word, i, settings.sensor[i].DewMode == 1 ? "below" : "above", settings.sensor[i].Dew);
+        snprintf(buf, BUFLEN, "%s S%d temperature %s %5.1f<br/>", leadIn, i, settings.sensor[i].DewMode == 1 ? "below" : "above", settings.sensor[i].Dew);
         deviceInfo += buf;
-        word = "AND ";
+        leadIn = "AND ";
       }
     }
   }
   if (settings.sensor[0].type && settings.sensor[1].type) {
     if (settings.TempDiff) {
-      snprintf(buf, BUFLEN, "%s (S0 temperature - S1 temperature) %s %5.1f<br/>", word, settings.TempDiff == 1 ? "below" : "above", settings.Temp);
+      snprintf(buf, BUFLEN, "%s (S0 temperature - S1 temperature) %s %5.1f<br/>", leadIn, settings.TempDiff == 1 ? "below" : "above", settings.Temp);
       deviceInfo += buf;
-      word = "AND ";
+      leadIn = "AND ";
     }
     if (settings.HumDiff) {
-      snprintf(buf, BUFLEN, "%s (S0 humidity - S1 humidity) %s %5.1f<br/>", word, settings.HumDiff == 1 ? "below" : "above", settings.Hum);
+      snprintf(buf, BUFLEN, "%s (S0 humidity - S1 humidity) %s %5.1f<br/>", leadIn, settings.HumDiff == 1 ? "below" : "above", settings.Hum);
       deviceInfo += buf;
-      word = "AND ";
+      leadIn = "AND ";
     }
     if (settings.DewDiff) {
-      snprintf(buf, BUFLEN, "%s (S0 dew point - S1 dew point) %s %5.1f<br/>", word, settings.DewDiff == 1 ? "below" : "above", settings.Dew);
+      snprintf(buf, BUFLEN, "%s (S0 dew point - S1 dew point) %s %5.1f<br/>", leadIn, settings.DewDiff == 1 ? "below" : "above", settings.Dew);
       deviceInfo += buf;
-      word = "AND ";
+      leadIn = "AND ";
     }
   }
-  if (!strcmp(word, "IF ")) {
+  if (!strcmp(leadIn, "IF ")) {
     deviceInfo += "no restriction<br/>\n";
   }
   deviceInfo += "</td></tr>\n";
@@ -1293,7 +1293,7 @@ void handleSet() {
         }
         break;
       case 12: // target Modbus port
-        if (uintval >= 1 && uintval <= 65535 && uintval != settings.targetPort) {
+        if (uintval >= 1 && uintval != settings.targetPort) {
           settings.targetPort = uintval;
           needsWrite = true;
         }
@@ -1327,7 +1327,7 @@ void handleSet() {
         break;
       case 19: // Sensor 0 Modbus port
       case 33: // Sensor 1 Modbus port
-        if (uintval >= 1 && uintval <= 65535 && uintval != settings.sensor[sensor].port) {
+        if (uintval >= 1 && uintval != settings.sensor[sensor].port) {
           settings.sensor[sensor].port = uintval;
           needsWrite = true;
         }
