@@ -62,7 +62,8 @@ Power is supplied by USB, sensors and relais driver are powered internally.
 | 43      | special | (S0 temperature - S1 temperature) condition type and value | YES | see S0 temperature condition and type above |
 | 44      | special | (S0 humidity - S1 humidity) condition type and value | YES | see above |
 | 45      | special | (S0 dew point - S1 dew point) condition type and value | YES | see above |
-| 46 .. 63 | *reserved* | YES | future extension space |
+| 46      | uint    | nibble 0: number of combo conditions met<br/>nibble 1: number of S1 conditions met<br/>nibble 2: number of S0 conditions met<br/>nibble 3: unused |     | debug info |
+| 47 .. 63 | *reserved* | YES | future extension space |
 | 64      | uint    | Number of event slots |    | if 0: no events available |
 | 65 ..   | special | Logged events (number see register 64) | bits 11 .. 15: Event code<br/>bits 6 .. 10: day/hour<br/>bits 0 .. 5: month/minute |
 

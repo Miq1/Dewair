@@ -65,6 +65,7 @@ struct ModbusTarget {
 // Switch hysteresis: only if a sequence of n measurements is identical, a switch action is considered
 uint16_t Hysteresis = 0xAAAA;                               // holds last 16 results
 uint16_t HYSTERESIS_MASK = 0x000F;                          // Bit mask to check last n measurements
+uint16_t cState = 0;                                        // last evaluation result for switching conditions
 
 // Target tracking
 uint16_t targetHealth = 0;
@@ -711,6 +712,9 @@ ModbusMessage FC03(ModbusMessage request) {
         uVal = int(settings.Dew * 10) + 2048;
         response.add(makeCompact(settings.DewDiff, uVal));
         break;
+      case 46: // current condition state
+        response.add(cState);
+        break;
       // reserved register numbers left out
       case 64: // event slot count
         response.add((uint16_t)MAXEVENT);
@@ -1164,6 +1168,11 @@ void handleDevice() {
         );
         message += buf;
       }
+    }
+    if (settings.Target != DEV_NONE) {
+      snprintf(buf, BUFLEN, "<tr><th>Target</th><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>%04X</td></tr>\n",
+        targetHealth);
+      message += buf;
     }
     message += "</table><br/>\n";
   }
@@ -1751,9 +1760,9 @@ void loop() {
       s2cond = 0;
       cccond = 0;
       // Yes. Check sensor 0
-      if (takeMeasurement(DHT0, "DHT0")) {
+      if (takeMeasurement(DHT0, "DHT0") || settings.sensor[0].type == DEV_NONE) {
         // Fine, check sensor 1
-        if (takeMeasurement(DHT1, "DHT1")) {
+        if (takeMeasurement(DHT1, "DHT1") || settings.sensor[1].type == DEV_NONE) {
           // All data gathered. Kill oldest hysteresis bit
           Hysteresis <<= 1;
           // Check both sensors
@@ -1822,6 +1831,9 @@ void loop() {
           if (s1cond + s2cond + cccond == 9) {
             Hysteresis |= 1;
           }
+          // Store conditions for Modbus retrieval
+          cState = (s1cond << 8) | (s2cond << 4) | cccond;
+
           // Shall we be active?
           if (settings.masterSwitch) {
             // Yes, Determine resulting switch state
