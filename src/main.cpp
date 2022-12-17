@@ -22,9 +22,9 @@
 #define SENSOR_0 D2
 #define SENSOR_1 D1
 #define SIGNAL_LED D6
-#define S1STATUS_LED D0
-#define S2STATUS_LED D4
-#define TARGET_LED D5
+#define S1STATUS_LED D4
+#define S2STATUS_LED D5
+#define TARGET_LED D0
 #define SWITCH_PIN D3
 #define TARGET_PIN D8
 
@@ -1760,9 +1760,26 @@ void loop() {
       s2cond = 0;
       cccond = 0;
       // Yes. Check sensor 0
-      if (takeMeasurement(DHT0, "DHT0") || settings.sensor[0].type == DEV_NONE) {
+      // It needs to be delivering data, or is to be ignored or has no conditions attached to it
+      if (takeMeasurement(DHT0, "DHT0") 
+         || settings.sensor[0].type == DEV_NONE
+         || (settings.sensor[0].TempMode == DEVC_NONE
+            && settings.sensor[0].HumMode == DEVC_NONE
+            && settings.sensor[0].DewMode == DEVC_NONE
+            && settings.TempDiff == DEVC_NONE
+            && settings.HumDiff == DEVC_NONE
+            && settings.DewDiff == DEVC_NONE)
+          ) {
         // Fine, check sensor 1
-        if (takeMeasurement(DHT1, "DHT1") || settings.sensor[1].type == DEV_NONE) {
+        if (takeMeasurement(DHT1, "DHT1") 
+          || settings.sensor[1].type == DEV_NONE
+          || (settings.sensor[1].TempMode == DEVC_NONE
+              && settings.sensor[1].HumMode == DEVC_NONE
+              && settings.sensor[1].DewMode == DEVC_NONE
+              && settings.TempDiff == DEVC_NONE
+              && settings.HumDiff == DEVC_NONE
+              && settings.DewDiff == DEVC_NONE)
+            ) {
           // All data gathered. Kill oldest hysteresis bit
           Hysteresis <<= 1;
           // Check both sensors
@@ -1771,6 +1788,12 @@ void loop() {
             // Sensor not connected? Counts as all conditions met
             if (settings.sensor[i].type == DEV_NONE) {
                 checks = 3;
+                // We may have left a LED on for non-existing sensors. Switch it of in case
+                if (i == 0) {
+                  S1LED.stop();
+                } else {
+                  S2LED.stop();
+                }
             } else {
               // No, we have a sensor 
               mySensor& sensor = (i == 0) ? DHT0 : DHT1;
