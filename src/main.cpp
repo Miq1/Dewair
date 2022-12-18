@@ -22,8 +22,8 @@
 #define SENSOR_0 D2
 #define SENSOR_1 D1
 #define SIGNAL_LED D6
-#define S1STATUS_LED D4
-#define S2STATUS_LED D5
+#define S0STATUS_LED D4
+#define S1STATUS_LED D5
 #define TARGET_LED D0
 #define SWITCH_PIN D3
 #define TARGET_PIN D8
@@ -73,8 +73,8 @@ bool switchedON = false;
 
 // Blue status LED will blink differently if target socket is switched on
 Blinker signalLED(SIGNAL_LED);
+Blinker S0LED(S0STATUS_LED);
 Blinker S1LED(S1STATUS_LED);
-Blinker S2LED(S2STATUS_LED);
 Blinker targetLED(TARGET_LED);
 
 // Blink pattern for "target ON"
@@ -108,10 +108,11 @@ struct mySensor {
   uint16_t healthTracker;
   uint8_t sensor01;
   bool lockFlag;
-  mySensor(Blinker& sLED, uint8_t whichOne) : statusLED(sLED), healthTracker(0), sensor01(whichOne), lockFlag(false) { }
+  const char *lbl;
+  mySensor(Blinker& sLED, uint8_t whichOne, const char *l) : statusLED(sLED), healthTracker(0), sensor01(whichOne), lockFlag(false), lbl(l) { }
 };
-mySensor DHT0(S1LED, 0);
-mySensor DHT1(S2LED, 1);
+mySensor DHT0(S0LED, 0, "DHT0");
+mySensor DHT1(S1LED, 1, "DHT1");
 
 // Choice list for target and sensor devices
 enum DEVICEMODE : uint8_t { DEV_NONE=0, DEV_LOCAL, DEV_MODBUS, DEV_RESERVED };
@@ -136,7 +137,7 @@ public:
 };
 
 // Settings data
-const uint16_t MAGICVALUE(0x4715);
+const uint16_t MAGICVALUE(0x4716);
 const uint8_t STRINGPARMLENGTH(32);
 const uint8_t CONFIGPARAMS(48);
 struct SetData {
@@ -171,6 +172,7 @@ struct SetData {
   float Hum;                             // CV45 (S0 - S1) condition humidity value
   DEVICECOND DewDiff;                    // CV46 (S0 - S1) dew point condition 0:ignore, 1:<, 2:>
   float Dew;                             // CV47 (S0 - S1) condition dew point value
+  bool fallbackSwitch;                   // CV48 Fallback if sensors etc. will fail
   uint16_t restarts;                     // number of reboots
   SetData() {
     magicValue = 0;
@@ -285,6 +287,7 @@ int writeSettings() {
       writeSetting(sJ, head, 45, settings.Hum);
       writeSetting(sJ, head, 46, settings.DewDiff);
       writeSetting(sJ, head, 47, settings.Dew);
+      writeSetting(sJ, head, 48, (uint8_t)(settings.fallbackSwitch ? 1 : 0));
       // Write function footer
       sJ.println("}");
       sJ.close();
@@ -329,7 +332,7 @@ ModbusClientTCPasync MBclient(IPAddress(0, 0, 0, 0), 502);
 // *******************************
 
 // checkSensor: test if physical sensor is functional
-int checkSensor(mySensor& ms, const char *label) {
+int checkSensor(mySensor& ms) {
   int rc = -1;
 
   // advance health tracker
@@ -337,14 +340,14 @@ int checkSensor(mySensor& ms, const char *label) {
   // The DHT lib will return nan values if no sensor is present
   if (!isnan(ms.sensor.getTemperature())) {
     // We got a value - sensor seems to be functional
-    LOG_I("Sensor %s ok.\n", label);
+    LOG_I("Sensor %s ok.\n", ms.lbl);
     ms.healthTracker |= 1;
     // Light upper status LED
     ms.statusLED.start(DEVICE_OK);
     rc = 0;
   } else {
     // We caught a nan.
-    LOG_E("Sensor %s: error %s\n", label, ms.sensor.getStatusString());
+    LOG_E("Sensor %s: error %s\n", ms.lbl, ms.sensor.getStatusString());
     // Turn off status LED
     ms.statusLED.start(DEVICE_IGNORED);
   }
@@ -353,7 +356,7 @@ int checkSensor(mySensor& ms, const char *label) {
 
 // takeMeasurement: get temperature, humidity and dew point for a sensor
 // If no sensor is connected, try to get data from Modbus source
-bool takeMeasurement(mySensor& ms, const char *label) {
+bool takeMeasurement(mySensor& ms) {
   bool rc = false;
   SetData::SensorData& sd = settings.sensor[ms.sensor01];
 
@@ -387,7 +390,7 @@ bool takeMeasurement(mySensor& ms, const char *label) {
         (uint16_t)6);
       if (e != SUCCESS) {
         ModbusError me(e);
-        LOG_E("Error requesting sensor %d/%s - %s\n", ms.sensor01, label, (const char *)me);
+        LOG_E("Error requesting sensor %d/%s - %s\n", ms.sensor01, ms.lbl, (const char *)me);
       } else {
         rc = true;
       }
@@ -447,6 +450,9 @@ void writeDeviceInfo() {
   deviceInfo += buf;
   // Master switch state
   snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Master switch</th><td>%s</td>\n", settings.masterSwitch ? "ON" : "OFF");
+  deviceInfo += buf;
+  // Fallback switch state
+  snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Fallback: switch to</th><td>%s</td>\n", settings.fallbackSwitch ? "ON" : "OFF");
   deviceInfo += buf;
   // Hysteresis settings
   snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Measuring every</th><td>%d seconds</td>\n", settings.measuringInterval);
@@ -715,6 +721,10 @@ ModbusMessage FC03(ModbusMessage request) {
       case 46: // current condition state
         response.add(cState);
         break;
+      case 47: // Fallback switch
+        uVal = settings.fallbackSwitch ? 1 : 0;
+        response.add(uVal);
+        break;
       // reserved register numbers left out
       case 64: // event slot count
         response.add((uint16_t)MAXEVENT);
@@ -899,12 +909,13 @@ Error writeRegister(uint16_t address, uint16_t value) {
         rc = ILLEGAL_DATA_VALUE;
       }
       break;
-    case 46 ... 63:  // spare registers for future extensions
-      rc = ILLEGAL_DATA_ADDRESS;
+    case 47: // fallback switch
+      settings.fallbackSwitch = (value ? true : false);
       break;
     default:
       // If we end up here, the address is not write-enabled
       rc = ILLEGAL_DATA_ADDRESS;
+      break;
     }
   } else {
     // address outside register range
@@ -1433,6 +1444,10 @@ void handleSet() {
           needsWrite = true;
         }
         break;
+      case 48: // Fallback switch
+        if ((uintval == 0) && settings.fallbackSwitch) { settings.fallbackSwitch = false; needsWrite = true; }
+        if ((uintval != 0) && !settings.fallbackSwitch) { settings.fallbackSwitch = true; needsWrite = true; }
+        break;
       default: // Unhandled number
         LOG_I("CV parameter number unhandled [0..%d]: %d\n", CONFIGPARAMS, numbr);
         break;
@@ -1470,8 +1485,8 @@ void setup() {
   DHT1.sensor.setup(SENSOR_1, DHTesp::DHT22);
 
   // First check of sensors
-  checkSensor(DHT0, "DHT0");
-  checkSensor(DHT1, "DHT1");
+  checkSensor(DHT0);
+  checkSensor(DHT1);
 
   // Make time for held button detection longer - 1s
   tSwitch.setTiming(250, 1000);
@@ -1517,6 +1532,7 @@ void setup() {
     settings.magicValue = MAGICVALUE;
     settings.restarts = 0;
     settings.masterSwitch = false;
+    settings.fallbackSwitch = false;
     settings.hystSteps = 4;
     settings.measuringInterval = 20;
     settings.targetPort = 502;
@@ -1661,12 +1677,14 @@ void loop() {
   static uint8_t s1cond = 0;
   static uint8_t s2cond = 0;
   static uint8_t cccond = 0;
+  // Counter for measurement failures
+  static uint16_t failCnt = 0;
 
   // Keep track of blinking status LEDs and button presses
   signalLED.update();
   targetLED.update();
+  S0LED.update();
   S1LED.update();
-  S2LED.update();
 
   // Update web server
   HTMLserver.handleClient();
@@ -1685,13 +1703,13 @@ void loop() {
       // Short press?
       if (be == BE_CLICK) {
         // Yes, single click. Check sensors again
-        checkSensor(DHT0, "DHT0");
-        checkSensor(DHT1, "DHT1");
+        checkSensor(DHT0);
+        checkSensor(DHT1);
       } else if (be == BE_PRESS) {
         // No, button was held. Switch to manual mode
         signalLED.start(MANUAL_BLINK);
+        S0LED.stop();
         S1LED.stop();
-        S2LED.stop();
         targetLED.stop();
         mode = MANUAL;
         registerEvent(ENTER_MAN);
@@ -1700,11 +1718,11 @@ void loop() {
         // Let the three device LEDs signal the switch logic calculations result
         // Will be normalized as soon as the next measuring cycle is begun.
         // Sensor 0 all conditions met?
-        if (s1cond == 3) { S1LED.start(MANUAL_BLINK);  // Yes, LED steady on
-        } else           { S1LED.stop(); }             // No, LED off
+        if (s1cond == 3) { S0LED.start(MANUAL_BLINK);  // Yes, LED steady on
+        } else           { S0LED.stop(); }             // No, LED off
         // Sensor 1 all conditions met?
-        if (s2cond == 3) { S2LED.start(MANUAL_BLINK);
-        } else           { S2LED.stop(); }
+        if (s2cond == 3) { S1LED.start(MANUAL_BLINK);
+        } else           { S1LED.stop(); }
         // Combined conditions all met?
         if (cccond == 3) { targetLED.start(MANUAL_BLINK);
         } else           { targetLED.stop(); }
@@ -1759,122 +1777,125 @@ void loop() {
       s1cond = 0;
       s2cond = 0;
       cccond = 0;
-      // Yes. Check sensor 0
-      // It needs to be delivering data, or is to be ignored or has no conditions attached to it
-      if (takeMeasurement(DHT0, "DHT0") 
-         || settings.sensor[0].type == DEV_NONE
-         || (settings.sensor[0].TempMode == DEVC_NONE
-            && settings.sensor[0].HumMode == DEVC_NONE
-            && settings.sensor[0].DewMode == DEVC_NONE
-            && settings.TempDiff == DEVC_NONE
-            && settings.HumDiff == DEVC_NONE
-            && settings.DewDiff == DEVC_NONE)
-          ) {
-        // Fine, check sensor 1
-        if (takeMeasurement(DHT1, "DHT1") 
-          || settings.sensor[1].type == DEV_NONE
-          || (settings.sensor[1].TempMode == DEVC_NONE
-              && settings.sensor[1].HumMode == DEVC_NONE
-              && settings.sensor[1].DewMode == DEVC_NONE
-              && settings.TempDiff == DEVC_NONE
-              && settings.HumDiff == DEVC_NONE
-              && settings.DewDiff == DEVC_NONE)
-            ) {
-          // All data gathered. Kill oldest hysteresis bit
-          Hysteresis <<= 1;
-          // Check both sensors
-          for (uint8_t i = 0; i < 2; i++) {
-            uint8_t& checks = (i == 0 ? s1cond : s2cond);
-            // Sensor not connected? Counts as all conditions met
-            if (settings.sensor[i].type == DEV_NONE) {
-                checks = 3;
-                // We may have left a LED on for non-existing sensors. Switch it of in case
-                if (i == 0) {
-                  S1LED.stop();
-                } else {
-                  S2LED.stop();
-                }
-            } else {
-              // No, we have a sensor 
-              mySensor& sensor = (i == 0) ? DHT0 : DHT1;
-              // Wait while data is being written (handleResponse())
-              while (sensor.lockFlag) { delay(10); }
-              // 1: Check temperature
-              switch (settings.sensor[i].TempMode) {
-              case DEVC_NONE:  checks++; break;
-              case DEVC_LESS:  if (sensor.th.temperature < settings.sensor[i].Temp) { checks++; } break;
-              case DEVC_GREATER:  if (sensor.th.temperature > settings.sensor[i].Temp) { checks++; } break;
-              case DEVC_RESERVED: break;
-              }
-              // 2: Check humidity
-              switch (settings.sensor[i].HumMode) {
-              case DEVC_NONE:  checks++; break;
-              case DEVC_LESS:  if (sensor.th.humidity < settings.sensor[i].Hum) { checks++; } break;
-              case DEVC_GREATER:  if (sensor.th.humidity > settings.sensor[i].Hum) { checks++; } break;
-              case DEVC_RESERVED: break;
-              }
-              // 3: Check dew point
-              switch (settings.sensor[i].DewMode) {
-              case DEVC_NONE:  checks++; break;
-              case DEVC_LESS:  if (sensor.dewPoint < settings.sensor[i].Dew) { checks++; } break;
-              case DEVC_GREATER:  if (sensor.dewPoint > settings.sensor[i].Dew) { checks++; } break;
-              case DEVC_RESERVED: break;
-              }
-            }
-          }
-          // Finally check combo conditions
-          // If we have one sensor only, count as all conditions met
-          if (settings.sensor[0].type == DEV_NONE || settings.sensor[1].type == DEV_NONE) {
-            cccond += 3;
-          } else {
-            // We have both sensors.
-            // Check temperature
-            switch (settings.TempDiff) {
-            case DEVC_NONE: cccond++; break;
-            case DEVC_LESS: if (DHT0.th.temperature - DHT1.th.temperature < settings.Temp) { cccond++; } break;
-            case DEVC_GREATER: if (DHT0.th.temperature - DHT1.th.temperature > settings.Temp) { cccond++; } break;
-            case DEVC_RESERVED: break;
-            }
-            // Check humidity
-            switch (settings.HumDiff) {
-            case DEVC_NONE: cccond++; break;
-            case DEVC_LESS: if (DHT0.th.humidity - DHT1.th.humidity < settings.Hum) { cccond++; } break;
-            case DEVC_GREATER: if (DHT0.th.humidity - DHT1.th.humidity > settings.Hum) { cccond++; } break;
-            case DEVC_RESERVED: break;
-            }
-            // Check dew point
-            switch (settings.DewDiff) {
-            case DEVC_NONE: cccond++; break;
-            case DEVC_LESS: if (DHT0.dewPoint - DHT1.dewPoint < settings.Dew) { cccond++; } break;
-            case DEVC_GREATER: if (DHT0.dewPoint - DHT1.dewPoint > settings.Dew) { cccond++; } break;
-            case DEVC_RESERVED: break;
-            }
-          }
-          // All conditions met?
-          if (s1cond + s2cond + cccond == 9) {
-            Hysteresis |= 1;
-          }
-          // Store conditions for Modbus retrieval
-          cState = (s1cond << 8) | (s2cond << 4) | cccond;
+      // Kill oldest hysteresis bit
+      Hysteresis <<= 1;
+      // Check for valid measurements
+      bool measurementSuccess = true;
+      // Check both sensors
+      for (uint8_t i = 0; i < 2; i++) {
+        // Select sensor
+        mySensor& sensor = (i == 0) ? DHT0 : DHT1;
+        uint8_t& checks = (i == 0 ? s1cond : s2cond);
 
-          // Shall we be active?
-          if (settings.masterSwitch) {
-            // Yes, Determine resulting switch state
-            bool desiredStateON = false;
-            // Did all considered measurements suggest ON state?
-            if ((Hysteresis & HYSTERESIS_MASK) == HYSTERESIS_MASK) {
-              // Yes, note it.
-              desiredStateON = true;
+        // Do we need a measurement at all?
+        if (settings.sensor[i].type != DEV_NONE
+          && (settings.sensor[i].TempMode != DEVC_NONE
+            || settings.sensor[i].HumMode != DEVC_NONE
+            || settings.sensor[i].DewMode != DEVC_NONE
+            || settings.TempDiff != DEVC_NONE
+            || settings.HumDiff != DEVC_NONE
+            || settings.DewDiff != DEVC_NONE) ) {
+          // We do, check sensor
+          if (takeMeasurement(sensor)) {
+            // 1: Check temperature
+            switch (settings.sensor[i].TempMode) {
+            case DEVC_NONE:  checks++; break;
+            case DEVC_LESS:  if (sensor.th.temperature < settings.sensor[i].Temp) { checks++; } break;
+            case DEVC_GREATER:  if (sensor.th.temperature > settings.sensor[i].Temp) { checks++; } break;
+            case DEVC_RESERVED: break;
             }
-            // Switch target (if necessary)
-            switchTarget(desiredStateON);
+            // 2: Check humidity
+            switch (settings.sensor[i].HumMode) {
+            case DEVC_NONE:  checks++; break;
+            case DEVC_LESS:  if (sensor.th.humidity < settings.sensor[i].Hum) { checks++; } break;
+            case DEVC_GREATER:  if (sensor.th.humidity > settings.sensor[i].Hum) { checks++; } break;
+            case DEVC_RESERVED: break;
+            }
+            // 3: Check dew point
+            switch (settings.sensor[i].DewMode) {
+            case DEVC_NONE:  checks++; break;
+            case DEVC_LESS:  if (sensor.dewPoint < settings.sensor[i].Dew) { checks++; } break;
+            case DEVC_GREATER:  if (sensor.dewPoint > settings.sensor[i].Dew) { checks++; } break;
+            case DEVC_RESERVED: break;
+            }
+          } else {
+            // Measurement has failed
+            measurementSuccess = false;
+          }
+        } else {
+          // No, sensor is irrelevant. Treat as successful
+          checks = 3;
+          // Just in case clear previous LED signals if no sensor
+          if (settings.sensor[i].type == DEV_NONE) {
+              sensor.statusLED.stop();
           }
         }
       }
+
+      // Finally check combo conditions
+      // Did both measurements (if any) succeed?
+      if (measurementSuccess) {
+        // Reset failure counter
+        failCnt = 0;
+        // If we have one sensor only, count as all conditions met
+        if (settings.sensor[0].type == DEV_NONE || settings.sensor[1].type == DEV_NONE) {
+          cccond += 3;
+        } else {
+          // We have both sensors.
+          // Check temperature
+          switch (settings.TempDiff) {
+          case DEVC_NONE: cccond++; break;
+          case DEVC_LESS: if (DHT0.th.temperature - DHT1.th.temperature < settings.Temp) { cccond++; } break;
+          case DEVC_GREATER: if (DHT0.th.temperature - DHT1.th.temperature > settings.Temp) { cccond++; } break;
+          case DEVC_RESERVED: break;
+          }
+          // Check humidity
+          switch (settings.HumDiff) {
+          case DEVC_NONE: cccond++; break;
+          case DEVC_LESS: if (DHT0.th.humidity - DHT1.th.humidity < settings.Hum) { cccond++; } break;
+          case DEVC_GREATER: if (DHT0.th.humidity - DHT1.th.humidity > settings.Hum) { cccond++; } break;
+          case DEVC_RESERVED: break;
+          }
+          // Check dew point
+          switch (settings.DewDiff) {
+          case DEVC_NONE: cccond++; break;
+          case DEVC_LESS: if (DHT0.dewPoint - DHT1.dewPoint < settings.Dew) { cccond++; } break;
+          case DEVC_GREATER: if (DHT0.dewPoint - DHT1.dewPoint > settings.Dew) { cccond++; } break;
+          case DEVC_RESERVED: break;
+          }
+        }
+        // All conditions met?
+        if (s1cond + s2cond + cccond == 9) {
+          Hysteresis |= 1;
+        }
+        // Store conditions for Modbus retrieval
+        cState = (s1cond << 8) | (s2cond << 4) | cccond;
+  
+        // Shall we be active?
+        if (settings.masterSwitch) {
+          // Yes, Determine resulting switch state
+          bool desiredStateON = false;
+          // Did all considered measurements suggest ON state?
+          if ((Hysteresis & HYSTERESIS_MASK) == HYSTERESIS_MASK) {
+            // Yes, note it.
+            desiredStateON = true;
+          }
+          // Switch target (if necessary)
+          switchTarget(desiredStateON);
+        }
+      } else {
+        // We failed for at least one sensor!
+        failCnt++;
+        if (failCnt > 3) {
+          // Three failures in a row - fallback!
+          switchTarget(settings.fallbackSwitch);
+        }
+      }
+        
       // Debug output
       LOG_V("S1 %5.1f %5.1f %5.1f\n", DHT0.th.temperature, DHT0.th.humidity, DHT0.dewPoint);
       LOG_V("S2 %5.1f %5.1f %5.1f\n", DHT1.th.temperature, DHT1.th.humidity, DHT1.dewPoint);
-      LOG_V("    Check=%d/%d/%d\n", s1cond, s2cond, cccond);
+      LOG_V("    Check=%d/%d/%d Fails=%d\n", s1cond, s2cond, cccond, failCnt);
       measure = millis();
     }
   } else if (mode == MANUAL) {
@@ -1890,8 +1911,8 @@ void loop() {
       } else if (be == BE_PRESS) {
         // No, button was held. Switch to run mode
         signalLED.start(switchedON ? TARGET_ON_BLINK : TARGET_OFF_BLINK);
-        checkSensor(DHT0, "DHT0");
-        checkSensor(DHT1, "DHT1");
+        checkSensor(DHT0);
+        checkSensor(DHT1);
         mode = RUN;
         registerEvent(EXIT_MAN);
       }
