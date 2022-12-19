@@ -24,10 +24,10 @@ For schematics, PCB designs and 3D printable enclosures see the "Extras" folder.
 
 #### Configuration mode
 
-<img src=https://github.com/Miq1/DewAir/DewAir_basic.png alt="Basic data">
-<img src=https://github.com/Miq1/DewAir/DewAir_target.png alt="Target configuration">
-<img src=https://github.com/Miq1/DewAir/DewAir_sensor.png alt="Sensors configuration">
-<img src=https://github.com/Miq1/DewAir/DewAir_combo.png alt="Combo conditions">
+<img src=https://github.com/Miq1/DewAir/blob/master/DewAir_basic.png alt="Basic data">
+<img src=https://github.com/Miq1/DewAir/blob/master/DewAir_target.png alt="Target configuration">
+<img src=https://github.com/Miq1/DewAir/blob/master/DewAir_sensor.png alt="Sensors configuration">
+<img src=https://github.com/Miq1/DewAir/blob/master/DewAir_combo.png alt="Combo conditions">
 
 
 #### LED diagnosis
