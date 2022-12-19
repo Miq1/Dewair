@@ -1,22 +1,34 @@
 ## Multi-purpose environment sensor device
 
 DewAir was originally created to measure temperatures, humidity and dew point inside and outside a room and 
-control a ventilator to dry out the room.
+control a ventilator to dry out the room. 
+It has been modified in the meantime to accomodate other functions as temperature alarm, remote weather sensor etc.
 
-For this purpose it can be equipped with two DHT22 sensors, either plugged into the device or detached by a 3-wire cable.
-Control over the vent is provided by a relais connected to the device or over Modbus TCP to remotely switch a socket.
+For this purpose it can be equipped with none, one or two DHT22 sensors, either plugged into the device or detached by a 3-wire cable.
+Control over the vent is provided by a relais connected locally or over Modbus TCP to remotely switch a socket.
 
 The device can be configured with a built-in HTML page or over Modbus TCP.
 The latter also allows for data retrieval and maintenance. 
-If more than one DewAir device is used, one can pull the sensor data from another, saving sensors. 
+If more than one DewAir device is used, one can retrieve the sensor data from another over Modbus TCP, thus saving sensors. 
 
-Power is supplied by USB, sensors and relais driver are powered internally.
+Power is supplied by USB or 5V, sensors and relais driver are powered internally.
+Power consumption is below 90mA normally.
+
+For schematics, PCB designs and 3D printable enclosures see the "Extras" folder.
 
 ### Installation
 
 ### Usage instructions
 
 #### Start sequence
+
+#### Configuration mode
+
+<img src=https://github.com/Miq1/DewAir/DewAir_basic.png alt="Basic data">
+<img src=https://github.com/Miq1/DewAir/DewAir_target.png alt="Target configuration">
+<img src=https://github.com/Miq1/DewAir/DewAir_sensor.png alt="Sensors configuration">
+<img src=https://github.com/Miq1/DewAir/DewAir_combo.png alt="Combo conditions">
+
 
 #### LED diagnosis
 
