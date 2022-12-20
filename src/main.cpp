@@ -1780,23 +1780,29 @@ void loop() {
       // Kill oldest hysteresis bit
       Hysteresis <<= 1;
       // Check for valid measurements
-      bool measurementSuccess = true;
+      bool measurementSuccess = false;
+
       // Check both sensors
       for (uint8_t i = 0; i < 2; i++) {
         // Select sensor
         mySensor& sensor = (i == 0) ? DHT0 : DHT1;
         uint8_t& checks = (i == 0 ? s1cond : s2cond);
+        // Keep in mind if the sensor is relevant at all
+        bool isRelevant = false;
+        isRelevant = (settings.sensor[i].TempMode != DEVC_NONE
+              || settings.sensor[i].HumMode != DEVC_NONE
+              || settings.sensor[i].DewMode != DEVC_NONE
+              || settings.TempDiff != DEVC_NONE
+              || settings.HumDiff != DEVC_NONE
+              || settings.DewDiff != DEVC_NONE);
 
         // Do we need a measurement at all?
-        if (settings.sensor[i].type != DEV_NONE
-          && (settings.sensor[i].TempMode != DEVC_NONE
-            || settings.sensor[i].HumMode != DEVC_NONE
-            || settings.sensor[i].DewMode != DEVC_NONE
-            || settings.TempDiff != DEVC_NONE
-            || settings.HumDiff != DEVC_NONE
-            || settings.DewDiff != DEVC_NONE) ) {
-          // We do, check sensor
-          if (takeMeasurement(sensor)) {
+        if (settings.sensor[i].type != DEV_NONE) {
+          // We do, check sensor.
+          measurementSuccess = takeMeasurement(sensor);
+          // Did we get a measurement and is it relevant?
+          if (measurementSuccess && isRelevant) {
+            // Yes, it is.
             // 1: Check temperature
             switch (settings.sensor[i].TempMode) {
             case DEVC_NONE:  checks++; break;
@@ -1819,16 +1825,24 @@ void loop() {
             case DEVC_RESERVED: break;
             }
           } else {
-            // Measurement has failed
-            measurementSuccess = false;
+            // No, sensor is irrelevant or measurement has failed
+            if (measurementSuccess) {
+              // Was successful, so the sensor seems to be irrelevant
+              checks = 3;
+              // Just in case clear previous LED signals if no sensor
+              if (settings.sensor[i].type == DEV_NONE) {
+                  sensor.statusLED.stop();
+              }
+            } else {
+              // Measurement has failed. Bail out if it was a relevant sensor
+              if (isRelevant) {
+                break;
+              }
+            }
           }
         } else {
-          // No, sensor is irrelevant. Treat as successful
+          // Sensor non-existent, assume all conditions met
           checks = 3;
-          // Just in case clear previous LED signals if no sensor
-          if (settings.sensor[i].type == DEV_NONE) {
-              sensor.statusLED.stop();
-          }
         }
       }
 
