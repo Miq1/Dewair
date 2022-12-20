@@ -21,11 +21,52 @@ For schematics, PCB designs and 3D printable enclosures see the "Extras" folder.
 ### Usage instructions
 
 #### Start sequence
+If powered on, the device will execute some initial steps until reaching normal function.
+If it never was configured before (no valid configuration data found) it will immediately start Configuration mode (see next section). 
+This is indicated by a slow triple blink pattern of the status LED.
+
+Else there is a short (3s) fast blinking period. If you will press the button within this time, Configuration mode will be entered unconditionally.
+
+Next configuration data is read, a WiFi connection is attempted with the given SSID and password. A fastly blinking LED will signal it.
+Once a connection is established, both sensors are checked. If a sensor is found reacting the respective LED will turn on.
+
+At this point the regular state is reached.
 
 #### Configuration mode
+In Configuration mode, the device will span its own WiFi network with a name of "DewAir-xxxxxx" and the given password in the source. This by default is "Maelstrom".
+
+You will have to connect to that network to get access to the configuration. Please note that this WiFi is unencrypted and should not be kept online for too long.
+
+Next you will want to open a browser to call the configuration HTML page with URL ``http://192.168.4.1/``. Note again that this is without TLS, so use ``http://``, not "https"!
+
+The configuration page has several parts, described top to bottom below. Most input fields have minimum and maximum values that you may see if hovering over it with your mouse pointer.
+The configuration may be invisible in parts at the first time, necessary detail input fields will be swapped in or out depending on your settings.
 
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_basic.png alt="Basic data">
+The most important part is the first, where you will have to enter a name of the new device and the WiFi credentials of your local WiFi for the device to connect to.
+Below that you may give an OTA password in case you are planning to update the firmware over air.
+
+The next is the "master switch". This is used to completely switch the logic and target switching on or off. With it you may temporarily disable the device's activities for re-configuration etc. It is advisable to leave it OFF for the first time you are configuring it to be able to cross-check your configurations before going live.
+
+Next comes the "fallback policy". This is to set a default target state in case the sensors or logic will fail at some time.
+If set to ON, a failure will drive the device to unconditionally switch the target to ON.
+The device logic may be resumed as soon as the causing failure is gone again.
+The advisable state of the fallback switch is totally up to you and your application. A frost protector f.i. may better be switched ON, while a motorized door may have to be OFF instead.
+
+Finally the "hysteresis" can be adjusted. Hysteresis means defining a number of necessary, consecutive measurements, whose results have lead to the same logic decision to switch the target.
+Hysteresis consists of two components: a number of measurements in a row necessary and the time between measuring actions.
+To give an example: a number of 5 measurements and a time of 20s will require the logic to decide the same for all 5 checks in 100s.
+Only if all 5 resulted in either all ON or all OFF decisions, the switch finally will be done, if applicable.
+The intended result is a less "nervous", steady switching behaviour that does not react on single dropout measurements.
+
+
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_target.png alt="Target configuration">
+The target definition is required should you want to physically switch something on or off based on the sensor data.
+If the device is used as a temp/humidity sensor only, the target may be left unconfigured.
+A target may be one of three variants: "ignored", if not relevant as described before, "connected", if the device's relay port is used for it, or "Modbus" for a remote "Smartdose" socket addressed via Modbus.
+To use the latter, the TCP IP address, Modbus port number and Modbus server ID for it are required.
+
+
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_sensor.png alt="Sensors configuration">
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_combo.png alt="Combo conditions">
 
