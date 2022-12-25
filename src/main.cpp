@@ -51,6 +51,7 @@ ESP8266WebServer HTMLserver(80);
 #define SET_JS "/set.js"
 #define CONFIG_HTML "/config.html"
 #define SETTINGS "/settings.bin"
+#define RESTARTS "/restarts.bin"
 String deviceInfo(1024);
 
 // Target address for Modbus device
@@ -173,11 +174,11 @@ struct SetData {
   DEVICECOND DewDiff;                    // CV46 (S0 - S1) dew point condition 0:ignore, 1:<, 2:>
   float Dew;                             // CV47 (S0 - S1) condition dew point value
   bool fallbackSwitch;                   // CV48 Fallback if sensors etc. will fail
-  uint16_t restarts;                     // number of reboots
   SetData() {
     magicValue = 0;
   }
 } settings;
+uint16_t restarts;                     // number of reboots
 
 // Write both SETTINGS and SET_JS files with current settings data
 // Some helper functions first
@@ -446,7 +447,7 @@ void writeDeviceInfo() {
   deviceInfo += "<table>\n";
   deviceInfo += "<tr align=\"left\"><th>Version</th><td>" VERSION "</td></tr>\n";
   deviceInfo += "<tr align=\"left\"><th>Build</th><td>" BUILD_TIMESTAMP "</td></tr>\n";
-  snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Restarts</th><td>%d</td>\n", settings.restarts);
+  snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Restarts</th><td>%d</td>\n", restarts);
   deviceInfo += buf;
   // Master switch state
   snprintf(buf, BUFLEN, "<tr align=\"left\"><th>Master switch</th><td>%s</td>\n", settings.masterSwitch ? "ON" : "OFF");
@@ -607,7 +608,7 @@ ModbusMessage FC03(ModbusMessage request) {
         response.add(uVal);
         break;
       case 15: // restart count
-        response.add(settings.restarts);
+        response.add(restarts);
         break;
       case 16: // run time since boot
         response.add(runTime);
@@ -1510,18 +1511,34 @@ void setup() {
     LOG_E("Settings file '" SETTINGS "' does not exist.");
   }
 
+  // Do we have a restarts file?
+  if (LittleFS.exists(RESTARTS)) {
+    // Yes. Open it for read
+    File sF = LittleFS.open(RESTARTS, "r");
+    // Successfully opened?
+    if (sF) {
+      // Yes. Read in settings struct
+      sF.readBytes((char *)&restarts, sizeof(restarts));
+      sF.close();
+    } else {
+      LOG_E("Settings file '" RESTARTS "' open failed.");
+    }
+  } else {
+    LOG_E("Settings file '" RESTARTS "' does not exist.");
+  }
+
   // Check if it is a valid settings file
   if (settings.magicValue == MAGICVALUE) {
     // It is - adjust runtime data with values from EEPROM
     // Increase boot count
-    settings.restarts++;
+    restarts++;
     // Write back
-    File sF = LittleFS.open(SETTINGS, "w");
+    File sF = LittleFS.open(RESTARTS, "w");
     if (sF) {
-      sF.write((char *)&settings, sizeof(SetData));
+      sF.write((char *)&restarts, sizeof(restarts));
       sF.close();
     } else {
-      LOG_E("Could not write '" SETTINGS "'");
+      LOG_E("Could not write '" RESTARTS "'");
     }
     // if we have neither WiFi access data nor a device name we need to go into CONFIG mode
     if (!*settings.deviceName || !*settings.WiFiPASS || !*settings.WiFiSSID) {
@@ -1530,7 +1547,7 @@ void setup() {
   } else {
     // No, fresh one, we need to initialize it
     settings.magicValue = MAGICVALUE;
-    settings.restarts = 0;
+    restarts = 0;
     settings.masterSwitch = false;
     settings.fallbackSwitch = false;
     settings.hystSteps = 4;
@@ -1552,7 +1569,7 @@ void setup() {
     mode = CONFIG;
   }
 
-  LOG_I("Restarts=%d\n", settings.restarts);
+  LOG_I("Restarts=%d\n", restarts);
 
   // Create device name from flash ID, to be used as AP SSID in case
   strcpy(AP_SSID, "Dewair_XXXXXX");

@@ -63,7 +63,7 @@ The intended result is a less "nervous", steady switching behaviour that does no
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_target.png alt="Target configuration">
 The target definition is required should you want to physically switch something on or off based on the sensor data.
 If the device is used as a temp/humidity sensor only, the target may be left unconfigured.
-A target may be one of three variants: "ignored", if not relevant as described before, "connected", if the device's relay port is used for it, or "Modbus" for a remote "Smartdose" socket addressed via Modbus.
+A target may be one of three variants: "ignored", if not relevant as described before, "connected", if the device's relay port is used for it, or "Modbus" for a remote "[Smartdose](https://github.com/eModbus/Smartdose)" socket addressed via Modbus.
 To use the latter, the TCP IP address, Modbus port number and Modbus server ID for it are required.
 
 
