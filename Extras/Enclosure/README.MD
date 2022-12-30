@@ -18,4 +18,5 @@ Holes in the bottom of box will hold the 4 LEDs and button in place.
 The openings in the box for sensors 0 and 1, 5V power connector, relay connector and the MCU's USB port are configurable as are required in the FreeCAD file provided.
 There is a DynamicData object called "Masse" in the construction, where a "Hasxxx" boolean variable is provided for each opening.
 If set to ``true``, the opening will be activated.
-<img src=https://github.com/Miq1/DewAir/blob/master/iExtras/Enclosure/SelectOpening.png alt="Openings selection">
+
+<img src=https://github.com/Miq1/DewAir/blob/master/Extras/Enclosure/SelectOpening.png alt="Openings selection">
