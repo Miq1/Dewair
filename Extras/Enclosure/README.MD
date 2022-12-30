@@ -9,6 +9,9 @@ The case described here is meant to fit the board with the attached LED part fac
 #### Parts
 
 Please note the names of the parts are in German - which should not matter at all, I will give the necessary descriptions below.
+Also please refer to the picture below!
+
+<img src=https://github.com/Miq1/DewAir/blob/master/Extras/Enclosure/DewAirCAD.png alt="Parts overview">
 
 ##### Unterschale ("Box")
 
