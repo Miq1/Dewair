@@ -23,3 +23,36 @@ There is a DynamicData object called "Masse" in the construction, where a "Hasxx
 If set to ``true``, the opening will be activated.
 
 <img src=https://github.com/Miq1/DewAir/blob/master/Extras/Enclosure/SelectOpenings.png alt="Openings selection">
+
+Note there are two ``HasUSB...`` variables that each will match the type of MCU module you are using - NodeMCU or Wemos D1 mini.
+
+##### Deckel ("Lid")
+
+The Deckel part is the closing lid of the box. It will be secured by 4 M3 screws on the corners to the Unterschale part.
+
+##### Taste ("Button")
+
+The Taste part is set into the largest bottom hole in the box and will allow to click the button on the PCB from outside of the box.
+It is advisable to print it in a different color than the box to have it stand out.
+
+##### LED-Riser
+
+Since the necessary distance between the PCB and the box needs to be larger than the LEDs' lengths to fit the switch button, LEDs need to be elevated a bit from the PCB when soldered.
+
+The LED-Riser part need to be printed and put in between the LEDs and the PCB before soldering these.
+
+#### Printing
+
+I would recommend to use PETG or ABS for the parts for better resilience of the case. Depending on the environment a PLA case may suffer from UV radiation or wet conditions.
+
+The LED-Riser part needs to be printed first, for it will have to be used when soldering the PCB already.
+
+#### Assembly
+
+Depending on the environment where the device is deployed up to all 8 PCB sockets can be equipped with melt-in threads for maximum stability. 
+The minimum would be the 4 sockets at the 4 corners, but I would advise to have the two additional sockets for the LED and button part used as well to prevent the board breaking if too hard a pressure is applied to the button.
+
+First set the Taste part into the matching hole of the box, then put in the PCB, gently guiding the LEDs into their holes.
+Fasten the PCB with M3 screws to the sockets.
+
+Insert 4 more melt-in threads into the corner blocks of the Deckel part. Put on the lid and secure it with 4 M3 countersunk screws to the box. The screw heads shall be completely sunk into the box' holes.
