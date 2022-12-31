@@ -29,6 +29,8 @@ Note there are two ``HasUSB...`` variables that each will match the type of MCU 
 ##### Deckel ("Lid")
 
 The Deckel part is the closing lid of the box. It will be secured by 4 M3 screws on the corners to the Unterschale part.
+Note that there are two STL files for this part. The one called ``...Deckel_Hang.stl`` contains a lid with four fastening tabs attached. 
+In the FreeCAD file, these can be activated by setting the ``HasHangers`` boolean variable to ``true``.
 
 ##### Taste ("Button")
 
@@ -56,3 +58,12 @@ First set the Taste part into the matching hole of the box, then put in the PCB,
 Fasten the PCB with M3 screws to the sockets.
 
 Insert 4 more melt-in threads into the corner blocks of the Deckel part. Put on the lid and secure it with 4 M3 countersunk screws to the box. The screw heads shall be completely sunk into the box' holes.
+
+### DHT22 housing
+
+This is a case for the DHT22 temperature/humidity sensors to be attached outside. The bottom part may be bolted to a wall, then the DHT22 with cable is laid into it and finally a lid is fastened to it.
+Thus you may open the case and take out the sensor without having to unscrew the case from the wall again.
+The cable is supposed to go through the S-shaped channel at the bottom to prevent it from being ripped off.
+The case has air vent openings facing down to prevent rain coming into the case.
+
+<img src=https://github.com/Miq1/DewAir/blob/master/Extras/Enclosure/Sensor.jpg alt="Sensor case">
