@@ -61,7 +61,8 @@ Insert 4 more melt-in threads into the corner blocks of the Deckel part. Put on 
 
 ### DHT22 housing
 
-This is a case for the DHT22 temperature/humidity sensors to be attached outside. The bottom part may be bolted to a wall, then the DHT22 with cable is laid into it and finally a lid is fastened to it.
+This is a little "bird cage" case for the DHT22 temperature/humidity sensors to be attached outside. 
+The bottom part may be bolted to a wall, then the DHT22 with cable is laid into it and finally a lid is fastened to it.
 Thus you may open the case and take out the sensor without having to unscrew the case from the wall again.
 The cable is supposed to go through the S-shaped channel at the bottom to prevent it from being ripped off.
 The case has air vent openings facing down to prevent rain coming into the case.
