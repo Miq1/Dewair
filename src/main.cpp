@@ -1854,6 +1854,9 @@ void loop() {
               // Measurement has failed. Bail out if it was a relevant sensor
               if (isRelevant) {
                 break;
+              } else {
+                // Take failure of irrelevant sensor as success anyway
+                measurementSuccess = true;
               }
             }
           }
@@ -1864,15 +1867,15 @@ void loop() {
       }
 
       // Finally check combo conditions
-      // Did both measurements (if any) succeed?
-      if (measurementSuccess) {
-        // Reset failure counter
-        failCnt = 0;
-        // If we have one sensor only, count as all conditions met
-        if (settings.sensor[0].type == DEV_NONE || settings.sensor[1].type == DEV_NONE) {
-          cccond += 3;
-        } else {
-          // We have both sensors.
+      // If we have one sensor only, count as all conditions met
+      if (settings.sensor[0].type == DEV_NONE || settings.sensor[1].type == DEV_NONE) {
+        cccond += 3;
+      } else {
+        // We have both sensors.
+        // Did both measurements (if any) succeed?
+        if (measurementSuccess) {
+          // Reset failure counter
+          failCnt = 0;
           // Check temperature
           switch (settings.TempDiff) {
           case DEVC_NONE: cccond++; break;
@@ -1894,14 +1897,25 @@ void loop() {
           case DEVC_GREATER: if (DHT0.dewPoint - DHT1.dewPoint > settings.Dew) { cccond++; } break;
           case DEVC_RESERVED: break;
           }
+        } else {
+          // We failed for at least one sensor!
+          failCnt++;
+          if (failCnt > 3) {
+            // Three failures in a row - fallback!
+            switchTarget(settings.fallbackSwitch);
+          }
         }
+      }
+
+      // Consider switching only if not in fail state
+      if (failCnt == 0) {
         // All conditions met?
         if (s1cond + s2cond + cccond == 9) {
           Hysteresis |= 1;
         }
         // Store conditions for Modbus retrieval
         cState = (s1cond << 8) | (s2cond << 4) | cccond;
-  
+
         // Shall we be active?
         if (settings.masterSwitch) {
           // Yes, Determine resulting switch state
@@ -1912,14 +1926,7 @@ void loop() {
             desiredStateON = true;
           }
           // Switch target (if necessary)
-          switchTarget(desiredStateON);
-        }
-      } else {
-        // We failed for at least one sensor!
-        failCnt++;
-        if (failCnt > 3) {
-          // Three failures in a row - fallback!
-          switchTarget(settings.fallbackSwitch);
+        switchTarget(desiredStateON);
         }
       }
         
