@@ -59,16 +59,32 @@ To give an example: a number of 5 measurements and a time of 20s will require th
 Only if all 5 resulted in either all ON or all OFF decisions, the switch finally will be done, if applicable.
 The intended result is a less "nervous", steady switching behaviour that does not react on single dropout measurements.
 
-
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_target.png alt="Target configuration">
 The target definition is required should you want to physically switch something on or off based on the sensor data.
 If the device is used as a temp/humidity sensor only, the target may be left unconfigured.
 A target may be one of three variants: "ignored", if not relevant as described before, "connected", if the device's relay port is used for it, or "Modbus" for a remote "[Smartdose](https://github.com/eModbus/Smartdose)" socket addressed via Modbus.
 To use the latter, the TCP IP address, Modbus port number and Modbus server ID for it are required.
 
-
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_sensor.png alt="Sensors configuration">
+Sensor configuration is quite similar to that of the target device.
+The "ignored" option leaves the respective sensor slot unregarded. At the same time the combo conditions (see below) will vanish, since 
+these only make sense with two sensors present.
+
+The data for a remote, Modbus-connected sensor are the same as before for the target, with one addition: sensor slot.
+A remote sensor must reside in another DewAir device to be addressed. As there are two sensor slots, you will need to name the one you are referring to.
+
+A typical application for a remote sensor is to have just one sensor outside the building and all other devices inside it referring to the values of that one sensor.
+
+The conditions section allows to set the conditions the respective sensor must detect to enable the target to be switched on.
+Temperature, humidity or dew point can be addressed separately, the results of the evaluations are combined by a logical "and".
+If you f.i. want to switch the target on a temperature higher than 10&#176;C and do not care about humidity or dew point, you will want to click on "above" in the temperature line and enter a value of 10 in the data input field. 
+Both humidity and dew point options need to be set to "ignore".
+
+Conditions set for a device that later was set to "ignore" as a device will remain unconsidered.
+
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_combo.png alt="Combo conditions">
+Likewise the combination conditions can be set. There always is a difference of the respective measurement of sensors S0 and S1 taken as the criteria for the conditions.
+The settings for the conditions are identical to those with the individual sensor conditions.
 
 
 #### LED decoding
