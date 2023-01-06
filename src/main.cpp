@@ -1779,7 +1779,8 @@ void loop() {
           switchedON = digitalRead(TARGET_PIN);
           targetHealth <<= 1;
           targetHealth |= 1;
-          targetLED.start(DEVICE_OK);
+          // Toggle LED to show target switch state
+          targetLED.start(switchedON ? DEVICE_OK : DEVICE_IGNORED);
         }
       }
       // Debug output
