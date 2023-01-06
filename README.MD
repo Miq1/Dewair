@@ -71,9 +71,40 @@ To use the latter, the TCP IP address, Modbus port number and Modbus server ID f
 <img src=https://github.com/Miq1/DewAir/blob/master/DewAir_combo.png alt="Combo conditions">
 
 
-#### LED diagnosis
+#### LED decoding
+There are four LEDs on the device in this order: status, S0, S1 and target. 
+I recommend to use a different LED color for the status LED for better recognition.
+
+##### Status LED
+It will signal the general state the device is in. The start sequence is described above.
+
+In manual mode the status LED will be steadily on, the target LED will show the switch state of the target.
+
+If the target is supposed to be off as result of the evaluation of the conditions, the status LED will display a slow single blinking pattern.
+
+Else, if the target is to be on, the status LED will send a triple blink with a pause in between.
+
+Whenever a measurement is initiated, the status LED will turn on and off after it.
+
+##### Sensor LEDs S0/S1
+The respective sensor LED will turn on, if the sensor was configured and a measurement was successful.
+A sensor not configured will be displayed by its LED being constantly off.
+
+If a sensor was not responding, the LED will start blinking very quickly. It will resume the regular pattern as soon as the sensor responded again.
+
+##### Target LED
+For remote (Modbus) targets, the LED will behave like the sensor leds do: steady on for responding target, quick blinking when the target did not react.
+
+A local target has no such diagnosis, but its state (on or off) will be shown by the LED being lit for ON and dark for OFF state.
 
 #### Button functions
+Besides the special interaction during startup (see above for the start sequence) the push button has three different applications.
+
+- Quick press<br/>will start a check of the sensors and target, if any, like is done repeatedly while the device is running.
+- Long press<br/>starts manual mode. In it, the sensors are ignored and further short presses will switch the target on and off in turns.
+  Another long press will end manual mode and return to automatic control.
+- Double click<br/>the conditions for sensor S0, S1 and the combination conditions are checked. If the respective conditions are met,
+  the respective sensor LED will light. The target LED stands for the combination conditions.
 
 ### Modbus register map
 
