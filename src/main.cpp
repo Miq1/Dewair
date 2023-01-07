@@ -15,7 +15,7 @@
 #include "ModbusClientTCPAsync.h"
 #include "ModbusServerTCPAsync.h"
 #undef LOCAL_LOG_LEVEL
-#define LOCAL_LOG_LEVEL LOG_LEVEL_VERBOSE
+#define LOCAL_LOG_LEVEL LOG_LEVEL_ERROR
 #include "Logging.h"
 
 // Pin definitions
@@ -1465,6 +1465,9 @@ void handleSet() {
 }
 
 void setup() {
+  // Activate logging, if required
+  MBUlogLvl = LOCAL_LOG_LEVEL;
+
   // Assume target not active
   signalLED.start(TARGET_OFF_BLINK);
 
@@ -1927,14 +1930,14 @@ void loop() {
             desiredStateON = true;
           }
           // Switch target (if necessary)
-        switchTarget(desiredStateON);
+          switchTarget(desiredStateON);
         }
       }
         
       // Debug output
       LOG_V("S1 %5.1f %5.1f %5.1f\n", DHT0.th.temperature, DHT0.th.humidity, DHT0.dewPoint);
       LOG_V("S2 %5.1f %5.1f %5.1f\n", DHT1.th.temperature, DHT1.th.humidity, DHT1.dewPoint);
-      LOG_V("    Check=%d/%d/%d Fails=%d\n", s1cond, s2cond, cccond, failCnt);
+      LOG_V("    Check=%d/%d/%d Fails=%d Hysteresis=%04X\n", s1cond, s2cond, cccond, failCnt, Hysteresis);
       measure = millis();
     }
   } else if (mode == MANUAL) {
