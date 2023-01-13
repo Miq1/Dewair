@@ -384,7 +384,7 @@ bool takeMeasurement(mySensor& ms) {
       // This will be asynchronous, so we may use the previous data for now.
       // MBclient.connect(sd.IP, sd.port);
       MBclient.setTarget(sd.IP, sd.port);
-      Error e = MBclient.addRequest((uint32_t)(0x1008 | ms.sensor01), 
+      Error e = MBclient.addRequest((uint32_t)((millis() << 16) | (0x1008 | ms.sensor01)), 
         sd.SID, 
         READ_HOLD_REGISTER,
         (uint16_t)(sd.slot ? 8 : 2),  // Register address slot 1:2, slot 2:2 + 6 = 8
@@ -1038,66 +1038,61 @@ void wifiSetup(const char *hostname) {
   signalLED.stop();
 }
 
+// Error handler for Modbus client
+void handleError(Error e, uint32_t token) {
+  ModbusError me(e);
+  LOG_E("Error response for request %04X: %02X - %s\n", token, e, (const char *)me);
+  // Register it in the appropriate health tracker
+  if (token == 0x1008) { 
+    DHT0.healthTracker <<= 1; 
+    DHT0.statusLED.start(DEVICE_ERROR_BLINK);
+  } else if ((token & 0xFFFF) == 0x1009) { 
+    DHT1.healthTracker <<= 1; 
+    DHT1.statusLED.start(DEVICE_ERROR_BLINK);
+  } else if ((token & 0xFFFF) == 0x2008 || (token & 0xFFFF) == 0x2009) { 
+    targetHealth <<= 1; 
+    targetLED.start(DEVICE_ERROR_BLINK);
+  }
+  // ****** to do: error tracking ******
+}
+
 // Response handler for Modbus client
-void handleResponse(ModbusMessage response, uint32_t token) {
-  Error e = response.getError();
-
-  LOG_V("Token %04X\n", token);
-  HEXDUMP_V("Response ", response.data(), response.size());
-
-  // Did we get an error?
-  if (e != SUCCESS) {
-    // Yes. Report it
-    ModbusError me(e);
-    LOG_E("Error response for request %04X: %02X - %s\n", token, e, (const char *)me);
-    // Register it in the appropriate health tracker
-    if (token == 0x1008) { 
-      DHT0.healthTracker <<= 1; 
-      DHT0.statusLED.start(DEVICE_ERROR_BLINK);
-    } else if (token == 0x1009) { 
-      DHT1.healthTracker <<= 1; 
-      DHT1.statusLED.start(DEVICE_ERROR_BLINK);
-    } else if (token == 0x2008 || token == 0x2009) { 
-      targetHealth <<= 1; 
-      targetLED.start(DEVICE_ERROR_BLINK);
-    }
+void handleData(ModbusMessage response, uint32_t token) {
+  if ((token & 0xFFFF) == 0x1008 || (token & 0xFFFF) == 0x1009) { // Sensor data request
+    // Get sensor slot
+    mySensor& sensor = ((token & 0xFFFF) == 0x1008) ? DHT0 : DHT1;
+    // get data
+    uint16_t offs = 3;
+    sensor.lockFlag = true;
+    offs = response.get(offs, sensor.th.temperature);
+    offs = response.get(offs, sensor.th.humidity);
+    offs = response.get(offs, sensor.dewPoint);
+    sensor.lockFlag = false;
+    // Register successful request
+    sensor.healthTracker <<= 1;
+    sensor.healthTracker |= 1;
+    sensor.statusLED.start(DEVICE_OK);
+  } else if ((token & 0xFFFF) == 0x2008) { // target state request
+    // Get data
+    uint16_t stateT = 0;
+    response.get(3, stateT);
+    switchedON = (stateT > 0);
+    // Register successful request
+    targetHealth <<= 1;
+    targetHealth |= 1;
+    targetLED.start(DEVICE_OK);
+  } else if ((token & 0xFFFF) == 0x2009) { // target switch request
+    // Get data
+    uint16_t stateT = 0;
+    response.get(4, stateT);
+    switchedON = (stateT > 0);
+    // Register successful request
+    targetHealth <<= 1;
+    targetHealth |= 1;
+    targetLED.start(DEVICE_OK);
   } else {
-    if (token == 0x1008 || token == 0x1009) { // Sensor data request
-      // Get sensor slot
-      mySensor& sensor = (token == 0x1008) ? DHT0 : DHT1;
-      // get data
-      uint16_t offs = 3;
-      sensor.lockFlag = true;
-      offs = response.get(offs, sensor.th.temperature);
-      offs = response.get(offs, sensor.th.humidity);
-      offs = response.get(offs, sensor.dewPoint);
-      sensor.lockFlag = false;
-      // Register successful request
-      sensor.healthTracker <<= 1;
-      sensor.healthTracker |= 1;
-      sensor.statusLED.start(DEVICE_OK);
-    } else if (token == 0x2008) { // target state request
-      // Get data
-      uint16_t stateT = 0;
-      response.get(3, stateT);
-      switchedON = (stateT > 0);
-      // Register successful request
-      targetHealth <<= 1;
-      targetHealth |= 1;
-      targetLED.start(DEVICE_OK);
-    } else if (token == 0x2009) { // target switch request
-      // Get data
-      uint16_t stateT = 0;
-      response.get(4, stateT);
-      switchedON = (stateT > 0);
-      // Register successful request
-      targetHealth <<= 1;
-      targetHealth |= 1;
-      targetLED.start(DEVICE_OK);
-    } else {
-      // Unknown token?
-      LOG_E("Unknown response %04X received.\n", token);
-    }
+    // Unknown token?
+    LOG_E("Unknown response %04X received.\n", token);
   }
 }
 
@@ -1113,7 +1108,7 @@ void switchTarget(bool onOff) {
       switchedON = onOff;
     } else if (settings.Target == DEV_MODBUS) {
       MBclient.setTarget(settings.targetIP, settings.targetPort);
-      Error e = MBclient.addRequest((uint32_t)0x2009, settings.targetSID, WRITE_HOLD_REGISTER, 1, onOff ? 1 : 0);
+      Error e = MBclient.addRequest((uint32_t)((millis() << 16) | 0x2009), settings.targetSID, WRITE_HOLD_REGISTER, 1, onOff ? 1 : 0);
       if (e != SUCCESS) {
         ModbusError me(e);
         LOG_E("Error sending 0x2009 request: %02X - %s\n", e, (const char *)me);
@@ -1641,8 +1636,9 @@ void setup() {
     registerEvent(settings.masterSwitch ? MASTER_ON : MASTER_OFF);
     // Shorten idle timeout for Modbus client connections
     MBclient.setTimeout(20000);
-    // Register response handler
-    MBclient.onResponseHandler(handleResponse);
+    // Register response handlers
+    MBclient.onErrorHandler(handleError);
+    MBclient.onDataHandler(handleData);
 
     // Register Modbus server functions
     MBserver.registerWorker(MYSID, READ_HOLD_REGISTER, FC03);
@@ -1770,7 +1766,7 @@ void loop() {
         if (settings.Target == DEV_MODBUS) {
           // Yes, send a request
           MBclient.setTarget(settings.targetIP, settings.targetPort);
-          Error e = MBclient.addRequest((uint32_t)0x2008, settings.targetSID, READ_HOLD_REGISTER, 1, 1);
+          Error e = MBclient.addRequest((uint32_t)((millis() << 16) | 0x2008), settings.targetSID, READ_HOLD_REGISTER, 1, 1);
           if (e != SUCCESS) {
             ModbusError me(e);
             Serial.printf("Error sending request 0x2008: %02X - %s\n", e, (const char *)me);
