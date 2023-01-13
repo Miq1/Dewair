@@ -71,6 +71,7 @@ uint16_t cState = 0;                                        // last evaluation r
 // Target tracking
 uint16_t targetHealth = 0;
 bool switchedON = false;
+RingBuf<uint8_t> TargetTrack(16);
 
 // Blue status LED will blink differently if target socket is switched on
 Blinker signalLED(SIGNAL_LED);
@@ -1052,8 +1053,10 @@ void handleError(Error e, uint32_t token) {
   } else if ((token & 0xFFFF) == 0x2008 || (token & 0xFFFF) == 0x2009) { 
     targetHealth <<= 1; 
     targetLED.start(DEVICE_ERROR_BLINK);
+    if (TargetTrack.last() != e) {
+      TargetTrack.push_back(e);
+    }
   }
-  // ****** to do: error tracking ******
 }
 
 // Response handler for Modbus client
@@ -1177,9 +1180,16 @@ void handleDevice() {
       }
     }
     if (settings.Target != DEV_NONE) {
-      snprintf(buf, BUFLEN, "<tr><th>Target</th><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>%04X</td></tr>\n",
+      snprintf(buf, BUFLEN, "<tr><th>Target</th><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>%04X",
         targetHealth);
       message += buf;
+      if (TargetTrack.size()) {
+        for (auto err : TargetTrack) {
+          snprintf(buf, BUFLEN, " %02X ", err);
+          message += buf;
+        }
+      }
+      message += "</td></tr>\n";
     }
     message += "</table><br/>\n";
   }

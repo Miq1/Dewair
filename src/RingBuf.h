@@ -83,6 +83,9 @@ public:
   // outside the currently used area, return 0
   const T operator[](size_t index);
 
+  // last: return the last added element or 0, of empty
+  const T last();
+
   // safeCopy: get a stable data copy from currently used buffer
   // target: buffer to copy data into
   // len: number of elements requested
@@ -398,6 +401,13 @@ const T RingBuf<T>::operator[](size_t index) {
     return *(RB_begin + index);
   }
   return 0;
+}
+
+// last: return the last element added or 0, if empty/invalid
+template <typename T>
+const T RingBuf<T>::last() {
+  if (empty() || !valid()) return 0;
+  return *(RB_end - 1);
 }
 
 // safeCopy: get a stable data copy from currently used buffer
