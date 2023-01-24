@@ -101,6 +101,10 @@ const uint16_t DEVICE_ERROR_BLINK(0xAAAA);
 // Switch to trigger restarts etc.
 Buttoner tSwitch(SWITCH_PIN, LOW);
 
+// Flag for remote reboot request
+uint8_t rebootPending = 0;
+long unsigned int rebootGrace = 0;
+
 // Two DHT sensors. In setup() will be found out if both are connected
 struct mySensor {
   DHTesp sensor;
@@ -111,7 +115,8 @@ struct mySensor {
   uint8_t sensor01;
   bool lockFlag;
   const char *lbl;
-  mySensor(Blinker& sLED, uint8_t whichOne, const char *l) : statusLED(sLED), healthTracker(0), sensor01(whichOne), lockFlag(false), lbl(l) { }
+  bool isRelevant;
+  mySensor(Blinker& sLED, uint8_t whichOne, const char *l) : statusLED(sLED), healthTracker(0), sensor01(whichOne), lockFlag(false), lbl(l), isRelevant(false) { }
 };
 mySensor DHT0(S0LED, 0, "DHT0");
 mySensor DHT1(S1LED, 1, "DHT1");
@@ -328,7 +333,7 @@ ModbusServerTCPasync MBserver;
 // Modbus server ID
 const uint8_t MYSID(1);
 // Client to access switch and sensor sources
-ModbusClientTCPasync MBclient(IPAddress(0, 0, 0, 0), 502);
+ModbusClientTCPasync MBclient(10);
 
 // Modbus register map
 // *******************************
@@ -393,6 +398,9 @@ bool takeMeasurement(mySensor& ms) {
       if (e != SUCCESS) {
         ModbusError me(e);
         LOG_E("Error requesting sensor %d/%s - %s\n", ms.sensor01, ms.lbl, (const char *)me);
+        if (TargetTrack.last() != e) {
+          TargetTrack.push_back(e);
+        }
       } else {
         rc = true;
       }
@@ -1003,6 +1011,29 @@ ModbusMessage FC10(ModbusMessage request) {
   return response;
 }
 
+// Reboot command
+ModbusMessage FC44(ModbusMessage request) {
+  ModbusMessage response;
+
+  // Not yet armed?
+  if (rebootPending == 0) {
+    // No, init reboot sequence
+    rebootPending = 1;
+    rebootGrace = millis();
+  } else {
+    // Yes, was armed. Within grace period?
+    if (millis() - rebootGrace < 60000) {
+      // Yes, trigger reboot now
+      rebootPending = 2;
+    } else {
+      // No, reset request
+      rebootPending = 0;
+    }
+  }
+  response.add(request.getServerID(), request.getFunctionCode(), (uint16_t)rebootPending);
+  return response;
+}
+
 // -----------------------------------------------------------------------------
 // Setup WiFi in RUN mode
 // -----------------------------------------------------------------------------
@@ -1115,6 +1146,9 @@ void switchTarget(bool onOff) {
       if (e != SUCCESS) {
         ModbusError me(e);
         LOG_E("Error sending 0x2009 request: %02X - %s\n", e, (const char *)me);
+        if (TargetTrack.last() != e) {
+          TargetTrack.push_back(e);
+        }
       }
       LOG_V("Switch request sent\n");
     }
@@ -1645,7 +1679,7 @@ void setup() {
     // Register state of Master switch
     registerEvent(settings.masterSwitch ? MASTER_ON : MASTER_OFF);
     // Shorten idle timeout for Modbus client connections
-    MBclient.setTimeout(20000);
+    MBclient.setTimeout(10000);
     // Register response handlers
     MBclient.onErrorHandler(handleError);
     MBclient.onDataHandler(handleData);
@@ -1654,6 +1688,8 @@ void setup() {
     MBserver.registerWorker(MYSID, READ_HOLD_REGISTER, FC03);
     MBserver.registerWorker(MYSID, WRITE_HOLD_REGISTER, FC06);
     MBserver.registerWorker(MYSID, WRITE_MULT_REGISTERS, FC10);
+    // Special restart worker
+    MBserver.registerWorker(MYSID, USER_DEFINED_44, FC44);
 
     // Set up web server in RUN mode
     // need to exclude the config files in RUN mode!
@@ -1807,7 +1843,7 @@ void loop() {
       // Kill oldest hysteresis bit
       Hysteresis <<= 1;
       // Check for valid measurements
-      bool measurementSuccess = false;
+      uint8_t measurementSuccess = 0;
 
       // Check both sensors
       for (uint8_t i = 0; i < 2; i++) {
@@ -1815,8 +1851,7 @@ void loop() {
         mySensor& sensor = (i == 0) ? DHT0 : DHT1;
         uint8_t& checks = (i == 0 ? s1cond : s2cond);
         // Keep in mind if the sensor is relevant at all
-        bool isRelevant = false;
-        isRelevant = (settings.sensor[i].TempMode != DEVC_NONE
+        sensor.isRelevant = (settings.sensor[i].TempMode != DEVC_NONE
               || settings.sensor[i].HumMode != DEVC_NONE
               || settings.sensor[i].DewMode != DEVC_NONE
               || settings.TempDiff != DEVC_NONE
@@ -1826,64 +1861,62 @@ void loop() {
         // Do we need a measurement at all?
         if (settings.sensor[i].type != DEV_NONE) {
           // We do, check sensor.
-          measurementSuccess = takeMeasurement(sensor);
-          // Did we get a measurement and is it relevant?
-          if (measurementSuccess && isRelevant) {
-            // Yes, it is.
-            // 1: Check temperature
-            switch (settings.sensor[i].TempMode) {
-            case DEVC_NONE:  checks++; break;
-            case DEVC_LESS:  if (sensor.th.temperature < settings.sensor[i].Temp) { checks++; } break;
-            case DEVC_GREATER:  if (sensor.th.temperature > settings.sensor[i].Temp) { checks++; } break;
-            case DEVC_RESERVED: break;
-            }
-            // 2: Check humidity
-            switch (settings.sensor[i].HumMode) {
-            case DEVC_NONE:  checks++; break;
-            case DEVC_LESS:  if (sensor.th.humidity < settings.sensor[i].Hum) { checks++; } break;
-            case DEVC_GREATER:  if (sensor.th.humidity > settings.sensor[i].Hum) { checks++; } break;
-            case DEVC_RESERVED: break;
-            }
-            // 3: Check dew point
-            switch (settings.sensor[i].DewMode) {
-            case DEVC_NONE:  checks++; break;
-            case DEVC_LESS:  if (sensor.dewPoint < settings.sensor[i].Dew) { checks++; } break;
-            case DEVC_GREATER:  if (sensor.dewPoint > settings.sensor[i].Dew) { checks++; } break;
-            case DEVC_RESERVED: break;
-            }
-          } else {
-            // No, sensor is irrelevant or measurement has failed
-            if (measurementSuccess) {
-              // Was successful, so the sensor seems to be irrelevant
-              checks = 3;
-              // Just in case clear previous LED signals if no sensor
-              if (settings.sensor[i].type == DEV_NONE) {
-                  sensor.statusLED.stop();
+          bool succ = takeMeasurement(sensor);
+          if (succ) {
+            measurementSuccess++;
+          }
+          // Is it relevant?
+          if (sensor.isRelevant) {
+            // Yes. Did we get data? (measurementSuccess will have been incremented already)
+            if (succ) {
+              // Yes, we did.
+              // 1: Check temperature
+              switch (settings.sensor[i].TempMode) {
+              case DEVC_NONE:  checks++; break;
+              case DEVC_LESS:  if (sensor.th.temperature < settings.sensor[i].Temp) { checks++; } break;
+              case DEVC_GREATER:  if (sensor.th.temperature > settings.sensor[i].Temp) { checks++; } break;
+              case DEVC_RESERVED: break;
+              }
+              // 2: Check humidity
+              switch (settings.sensor[i].HumMode) {
+              case DEVC_NONE:  checks++; break;
+              case DEVC_LESS:  if (sensor.th.humidity < settings.sensor[i].Hum) { checks++; } break;
+              case DEVC_GREATER:  if (sensor.th.humidity > settings.sensor[i].Hum) { checks++; } break;
+              case DEVC_RESERVED: break;
+              }
+              // 3: Check dew point
+              switch (settings.sensor[i].DewMode) {
+              case DEVC_NONE:  checks++; break;
+              case DEVC_LESS:  if (sensor.dewPoint < settings.sensor[i].Dew) { checks++; } break;
+              case DEVC_GREATER:  if (sensor.dewPoint > settings.sensor[i].Dew) { checks++; } break;
+              case DEVC_RESERVED: break;
               }
             } else {
-              // Measurement has failed. Bail out if it was a relevant sensor
-              if (isRelevant) {
-                break;
-              } else {
-                // Take failure of irrelevant sensor as success anyway
-                measurementSuccess = true;
-              }
+              // No, measurement has failed. Bail out here
+              break;
             }
+          } else {
+            // It is irrelevant, so assume all conditions met
+            checks = 3;
+            // Additionally, no combo conditions will have to be met
+            cccond = 3;
           }
         } else {
           // Sensor non-existent, assume all conditions met
           checks = 3;
+          // Additionally, no combo conditions will have to be met
+          cccond = 3;
+          // Just in case clear previous LED signals
+          sensor.statusLED.stop();
         }
       }
 
       // Finally check combo conditions
-      // If we have one sensor only, count as all conditions met
-      if (settings.sensor[0].type == DEV_NONE || settings.sensor[1].type == DEV_NONE) {
-        cccond += 3;
-      } else {
+      // If we have one sensor only, no need to check
+      if (cccond == 0) {
         // We have both sensors.
         // Did both measurements (if any) succeed?
-        if (measurementSuccess) {
+        if (measurementSuccess == 2) {
           // Reset failure counter
           failCnt = 0;
           // Check temperature
@@ -1945,6 +1978,16 @@ void loop() {
       LOG_V("S2 %5.1f %5.1f %5.1f\n", DHT1.th.temperature, DHT1.th.humidity, DHT1.dewPoint);
       LOG_V("    Check=%d/%d/%d Fails=%d Hysteresis=%04X\n", s1cond, s2cond, cccond, failCnt, Hysteresis);
       measure = millis();
+    }
+  
+    // Reboot requested?
+    if (rebootPending == 2) {
+      // Yes. Restart now
+      ESP.restart();
+    } else if (rebootGrace && millis() - rebootGrace > 60000) {
+      // No, but the grace period has passed. Deactivate reboot sequence
+      rebootPending = 0;
+      rebootGrace = 0;
     }
   } else if (mode == MANUAL) {
     // We are in manual mode.
