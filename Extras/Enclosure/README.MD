@@ -68,3 +68,39 @@ The cable is supposed to go through the S-shaped channel at the bottom to preven
 The case has air vent openings facing down to prevent rain coming into the case.
 
 <img src=https://github.com/Miq1/DewAir/blob/master/Extras/Enclosure/Sensor.jpg alt="Sensor case">
+
+### Large enclosure ("Dewair_gross_V2")
+
+The large enclosure fits the logic board plus some components to locally switch and power the target device.
+
+*** URGENT NOTE ***
+*** If you are not qualified enough to safely handle the mains power installations, I urgently advise to keep off! ***
+
+<img src=https://github.com/Miq1/DewAir/blob/master/Extras/Enclosure/Large.png alt="Large box">
+
+This will largely depend from your power line standards etc., so please note that it is currently designed for German 230V sockets etc.
+The components are chosen to require no direct soldering or contact with mains; a dedicated power PCB with relay could reduce the space requirements a lot.
+
+Feel free to use the enclosed FreeCAD files to modify it to your needs.
+
+The box as is will fit
+- the logic board
+- a micro USB port
+- a DIN rail 5V/2.4A power supply
+- a 40A SSR (solid state relay)
+- a standard "Schuko" 230V socket
+- cabling etc.
+
+The box and cover parts are exactly matching each other to get a safely closed and sturdy enclosure.
+The walls are 3mm wide to support that aim.
+As a consequence printing the parts will require about 300g PETG and take quite some time to finish.
+
+#### Application notes
+
+Most of the fixing of parts is done with metric screws, that are supposed to be fastened with melt-in threads of size M3.
+The holes in the box are provided for these.
+
+An exception is the USB port, where two 3mm self-cutting screws are necessary.
+Please note that you will have to make a micro USB connection cable to the ESP8266 board on the PCB.
+
+The power cord is supposed to be pushed through the L-shaped channel and fixed with the small rectangular lid provided as an extra part.
