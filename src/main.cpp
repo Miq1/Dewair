@@ -14,8 +14,6 @@
 #include "RingBuf.h"
 #include "ModbusClientTCPAsync.h"
 #include "ModbusServerTCPAsync.h"
-#undef LOCAL_LOG_LEVEL
-#define LOCAL_LOG_LEVEL LOG_LEVEL_ERROR
 #include "Logging.h"
 
 // Pin definitions
@@ -71,7 +69,14 @@ uint16_t cState = 0;                                        // last evaluation r
 // Target tracking
 uint16_t targetHealth = 0;
 bool switchedON = false;
-RingBuf<uint8_t> TargetTrack(16);
+struct TT {
+  Modbus::Error err;
+  uint16_t count;
+  TT() : err(SUCCESS), count(0) {}
+};
+const uint16_t TTslots(30);
+uint16_t ttSlot{0};
+TT targetTrack[TTslots];
 
 // Blue status LED will blink differently if target socket is switched on
 Blinker signalLED(SIGNAL_LED);
@@ -309,6 +314,32 @@ int writeSettings() {
   return rc;
 }
 
+// Keep track of Modbus error responses
+void registerMBerror(Modbus::Error e) {
+  // Only sensible if we have slots at all
+  if (TTslots) {
+    // Is the code the same as before?
+    if (e == targetTrack[ttSlot].err) {
+      // Yes. Did we count less than the counter can hold?
+      if (targetTrack[ttSlot].count < 65535) {
+        // Yes. Increase counter
+        targetTrack[ttSlot].count++;
+      }
+    } else {
+      // No it is different. Advanvce index
+      ttSlot++;
+      // did we reach the end of slots?
+      if (ttSlot >= TTslots) {
+        // Yes, wrap around
+        ttSlot = 0;
+      }
+      // Write error and init count
+      targetTrack[ttSlot].err = e;
+      targetTrack[ttSlot].count = 1;
+    }
+  }
+}
+
 // Number of event slots
 const uint8_t MAXEVENT(40);
 // Define the event types
@@ -389,7 +420,7 @@ bool takeMeasurement(mySensor& ms) {
       // Yes. Set target and send a request
       // This will be asynchronous, so we may use the previous data for now.
       // MBclient.connect(sd.IP, sd.port);
-      MBclient.setTarget(sd.IP, sd.port);
+      MBclient.connect(sd.IP, sd.port);
       Error e = MBclient.addRequest((uint32_t)((millis() << 16) | (0x1008 | ms.sensor01)), 
         sd.SID, 
         READ_HOLD_REGISTER,
@@ -398,9 +429,7 @@ bool takeMeasurement(mySensor& ms) {
       if (e != SUCCESS) {
         ModbusError me(e);
         LOG_E("Error requesting sensor %d/%s - %s\n", ms.sensor01, ms.lbl, (const char *)me);
-        if (TargetTrack.last() != e) {
-          TargetTrack.push_back(e);
-        }
+        registerMBerror(e);
       } else {
         rc = true;
       }
@@ -573,7 +602,7 @@ ModbusMessage FC03(ModbusMessage request) {
   request.get(4, words);
 
   // Valid address etc.?
-  if (address && words && address + words <= 65 + MAXEVENT) {
+  if (address && words && address + words <= 65 + MAXEVENT + 1 + TTslots * 2) {
     // Yes, looks good. Prepare response header
     response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
     // Temporary buffer for uint16_t manipulations
@@ -741,6 +770,25 @@ ModbusMessage FC03(ModbusMessage request) {
         break;
       case 65 ... (65 + MAXEVENT - 1): // Events
         response.add(events[a - 65]);
+        break;
+      case 65 + MAXEVENT: // Error tracking slots
+        response.add(TTslots);
+        break;
+      case 66 + MAXEVENT ... 65 + MAXEVENT + TTslots * 2: // Error tracking values
+        {
+          // Calculate index. Subtract start address and divide by two.
+          uint16_t relIndex = (a - (66 + MAXEVENT)) / 2;
+          // Now calculate slot from it. We may have to go back and around!
+          uint16_t slot = (ttSlot + TTslots - relIndex) % TTslots;
+          // Odd index (=count)?
+          if ((a - (66 + MAXEVENT)) & 1) {
+            // Yes. Return count
+            response.add(targetTrack[slot].count);
+          } else {
+            // No, error code requested
+            response.add((uint16_t)targetTrack[slot].err);
+          }
+        }
         break;
       default: // Reserve registers
         response.add((uint16_t)0);
@@ -1084,9 +1132,7 @@ void handleError(Error e, uint32_t token) {
   } else if ((token & 0xFFFF) == 0x2008 || (token & 0xFFFF) == 0x2009) { 
     targetHealth <<= 1; 
     targetLED.start(DEVICE_ERROR_BLINK);
-    if (TargetTrack.last() != e) {
-      TargetTrack.push_back(e);
-    }
+    registerMBerror(e);
   }
 }
 
@@ -1141,14 +1187,12 @@ void switchTarget(bool onOff) {
       digitalWrite(TARGET_PIN, onOff ? HIGH : LOW);
       switchedON = onOff;
     } else if (settings.Target == DEV_MODBUS) {
-      MBclient.setTarget(settings.targetIP, settings.targetPort);
+      MBclient.connect(settings.targetIP, settings.targetPort);
       Error e = MBclient.addRequest((uint32_t)((millis() << 16) | 0x2009), settings.targetSID, WRITE_HOLD_REGISTER, 1, onOff ? 1 : 0);
       if (e != SUCCESS) {
         ModbusError me(e);
         LOG_E("Error sending 0x2009 request: %02X - %s\n", e, (const char *)me);
-        if (TargetTrack.last() != e) {
-          TargetTrack.push_back(e);
-        }
+        registerMBerror(e);
       }
       LOG_V("Switch request sent\n");
     }
@@ -1186,69 +1230,25 @@ void handleRestart() {
 // Put out device status
 void handleDevice() {
   String message(4096);
-  const uint8_t BUFLEN(255);
-  char buf[BUFLEN];
-  message = "<!DOCTYPE html><html><header><link rel=\"stylesheet\" href=\"/styles.css\"><title>";
-  if (*settings.deviceName) {
-    message += settings.deviceName;
-  } else {
-    message += AP_SSID;
-  }
-  message += " status</title></header><body>\n";
-  // Add in deviceinfo
-  message += deviceInfo;
-  // In RUN mode, print out current measurements
-  if (mode == RUN) {
-    message += "<table><tr><th align=\"left\">Sensor</th><th>Temperature</th><th>Humidity</th><th>Dew point</th><th>Health</th></tr>\n";
-    for (uint8_t i = 0; i < 2; i++) {
-      mySensor& sensor = (i == 0) ? DHT0 : DHT1;
-      if (settings.sensor[i].type != DEV_NONE) {
-        snprintf(buf, BUFLEN, "<tr><th align=\"left\">%d</th><td>%5.1f&#8451;</td><td>%5.1f&#37;</td><td>%5.1f&#8451;</td><td>%04X</td></tr>\n",
-          i, 
-          sensor.th.temperature,
-          sensor.th.humidity,
-          sensor.dewPoint,
-          sensor.healthTracker
-        );
-        message += buf;
-      }
-    }
-    if (settings.Target != DEV_NONE) {
-      snprintf(buf, BUFLEN, "<tr><th>Target</th><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>%04X",
-        targetHealth);
-      message += buf;
-      if (TargetTrack.size()) {
-        for (auto err : TargetTrack) {
-          snprintf(buf, BUFLEN, " %02X ", err);
-          message += buf;
-        }
-      }
-      message += "</td></tr>\n";
-    }
-    message += "</table><br/>\n";
-  }
-  snprintf(buf, BUFLEN, "<div><b>Run time since boot:</b> %c%d:%02d</div>\n", runTime == 65535 ? '>' : ' ', runTime / 60, runTime % 60);
-  message += buf;
-  message += "<div><h3>Events</h3><table>";
-  for (auto e : events) {
-    uint8_t ev = (e >> 11) & 0x1F;
-    uint8_t hi = (e >> 6) & 0x1F;
-    uint8_t lo = e & 0x3F;
-    if (ev != NO_EVENT) {
-      char sep = (ev == BOOT_DATE || ev == DATE_CHANGE) ? '.' : ':';
-      snprintf(buf, BUFLEN, "<tr><th align=\"left\">%s</th><td>%02d%c%02d</td></tr>\n", eventname[ev], hi, sep, lo);
-      message += buf;
-    }
-  }
-  message += "</table></div><div>\n";
+  
+  // Use only in CONFIG mode
   if (mode == CONFIG) {
+    message = "<!DOCTYPE html><html><header><link rel=\"stylesheet\" href=\"/styles.css\"><title>";
+    if (*settings.deviceName) {
+      message += settings.deviceName;
+    } else {
+      message += AP_SSID;
+    }
+    message += " status</title></header><body>\n";
+    // Add in deviceinfo
+    message += deviceInfo;
     message += "<button onclick=\"window.location.href='/config.html';\" class=\"button\"> CONFIG page </button><div class=\"divider\"/>";
     message += "<button onclick=\"window.location.href='/restart';\" class=\"button red-button\"> Restart </button></div>";
+    message += "</body></html>";
+    HTMLserver.send(200, "text/html", message);
+    LOG_V("device message=%d\n", message.length());
+    HTMLserver.client().stop();
   }
-  message += "</body></html>";
-  HTMLserver.send(200, "text/html", message);
-  LOG_V("device message=%d\n", message.length());
-  HTMLserver.client().stop();
 }
 
 // Process config data received
@@ -1691,14 +1691,6 @@ void setup() {
     // Special restart worker
     MBserver.registerWorker(MYSID, USER_DEFINED_44, FC44);
 
-    // Set up web server in RUN mode
-    // need to exclude the config files in RUN mode!
-    HTMLserver.on("/config.html", notFound);
-    HTMLserver.on("/settings.bin", notFound);
-    HTMLserver.on("/set.js", notFound);
-    HTMLserver.on("/sub", notFound);
-    HTMLserver.on("/restart", notFound);
-
     // Create device info string
     writeDeviceInfo();
 
@@ -1714,20 +1706,19 @@ void setup() {
     // Set up open web server in CONFIG mode
     HTMLserver.on("/sub", handleSet);
     HTMLserver.on("/restart", handleRestart);
+    // Set up mode independent web server callbacks
+    HTMLserver.onNotFound(notFound);
+    HTMLserver.on("/", handleDevice);
+    HTMLserver.enableCORS(true);
+    HTMLserver.serveStatic("/", LittleFS, "/");
+    
+    // Start web server
+    HTMLserver.begin(80);
 
     // Signal config mode
     signalLED.start(CONFIG_BLINK);
   }
   LOG_I("%s, mode=%d\n", AP_SSID, mode);
-
-  // Set up mode independent web server callbacks
-  HTMLserver.onNotFound(notFound);
-  HTMLserver.on("/", handleDevice);
-  HTMLserver.enableCORS(true);
-  HTMLserver.serveStatic("/", LittleFS, "/");
-  
-  // Start web server
-  HTMLserver.begin(80);
 }
 
 void loop() {
@@ -1747,9 +1738,6 @@ void loop() {
   targetLED.update();
   S0LED.update();
   S1LED.update();
-
-  // Update web server
-  HTMLserver.handleClient();
 
   // Update mDNS
   MDNS.update();
@@ -1811,7 +1799,7 @@ void loop() {
         // Is it a Modbus device?
         if (settings.Target == DEV_MODBUS) {
           // Yes, send a request
-          MBclient.setTarget(settings.targetIP, settings.targetPort);
+          MBclient.connect(settings.targetIP, settings.targetPort);
           Error e = MBclient.addRequest((uint32_t)((millis() << 16) | 0x2008), settings.targetSID, READ_HOLD_REGISTER, 1, 1);
           if (e != SUCCESS) {
             ModbusError me(e);
@@ -2010,6 +1998,7 @@ void loop() {
     }
   } else {
     // No, CONFIG mode!
-    // **********************
+    // Update web server
+    HTMLserver.handleClient();
   }
 }
