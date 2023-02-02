@@ -1138,6 +1138,8 @@ void handleError(Error e, uint32_t token) {
 
 // Response handler for Modbus client
 void handleData(ModbusMessage response, uint32_t token) {
+  // Register successful request
+  registerMBerror(SUCCESS);
   if ((token & 0xFFFF) == 0x1008 || (token & 0xFFFF) == 0x1009) { // Sensor data request
     // Get sensor slot
     mySensor& sensor = ((token & 0xFFFF) == 0x1008) ? DHT0 : DHT1;
@@ -1170,6 +1172,7 @@ void handleData(ModbusMessage response, uint32_t token) {
     targetHealth <<= 1;
     targetHealth |= 1;
     targetLED.start(DEVICE_OK);
+    registerEvent(switchedON ? TARGET_ON : TARGET_OFF);
   } else {
     // Unknown token?
     LOG_E("Unknown response %04X received.\n", token);
@@ -1185,6 +1188,8 @@ void switchTarget(bool onOff) {
     if (settings.Target == DEV_LOCAL) {
       // Yes. Toggle target GPIO pin
       digitalWrite(TARGET_PIN, onOff ? HIGH : LOW);
+      // Register event
+      registerEvent(onOff ? TARGET_ON : TARGET_OFF);
       switchedON = onOff;
     } else if (settings.Target == DEV_MODBUS) {
       MBclient.connect(settings.targetIP, settings.targetPort);
@@ -1196,8 +1201,6 @@ void switchTarget(bool onOff) {
       }
       LOG_V("Switch request sent\n");
     }
-    // Register event
-    registerEvent(onOff ? TARGET_ON : TARGET_OFF);
   }
   // Update signal LED anyway
   signalLED.start(onOff ? TARGET_ON_BLINK : TARGET_OFF_BLINK);
