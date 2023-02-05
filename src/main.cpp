@@ -121,7 +121,15 @@ struct mySensor {
   bool lockFlag;
   const char *lbl;
   bool isRelevant;
-  mySensor(Blinker& sLED, uint8_t whichOne, const char *l) : statusLED(sLED), healthTracker(0), sensor01(whichOne), lockFlag(false), lbl(l), isRelevant(false) { }
+  bool lastCheckOK;
+  mySensor(Blinker& sLED, uint8_t whichOne, const char *l) : 
+    statusLED(sLED), 
+    healthTracker(0), 
+    sensor01(whichOne), 
+    lockFlag(false), 
+    lbl(l), 
+    isRelevant(false),
+    lastCheckOK(false) { }
 };
 mySensor DHT0(S0LED, 0, "DHT0");
 mySensor DHT1(S1LED, 1, "DHT1");
@@ -349,12 +357,14 @@ enum S_EVENT : uint8_t  {
   MASTER_ON, MASTER_OFF,
   TARGET_ON, TARGET_OFF,
   ENTER_MAN, EXIT_MAN,
+  FAIL_FB,
 };
 const char *eventname[] = { 
   "no event", "date change", "boot date", "boot time", 
   "MASTER on", "MASTER off", 
   "target on", "target off", 
   "enter manual", "exit manual",
+  "failure fallback",
 };
 // Allocate event buffer
 RingBuf<uint16_t> events(MAXEVENT);
@@ -382,12 +392,14 @@ int checkSensor(mySensor& ms) {
     ms.healthTracker |= 1;
     // Light upper status LED
     ms.statusLED.start(DEVICE_OK);
+    ms.lastCheckOK = true;
     rc = 0;
   } else {
     // We caught a nan.
     LOG_E("Sensor %s: error %s\n", ms.lbl, ms.sensor.getStatusString());
     // Turn off status LED
     ms.statusLED.start(DEVICE_IGNORED);
+    ms.lastCheckOK = false;
   }
   return rc;
 }
@@ -409,8 +421,10 @@ bool takeMeasurement(mySensor& ms) {
       rc = true;
       ms.healthTracker |= 1;
       ms.statusLED.start(DEVICE_OK);
+      ms.lastCheckOK = true;
     } else {
       ms.statusLED.start(DEVICE_ERROR_BLINK);
+      ms.lastCheckOK = false;
     }
   // No, but a Modbus source perhaps?
   } else if (sd.type == DEV_MODBUS) {
@@ -420,7 +434,7 @@ bool takeMeasurement(mySensor& ms) {
       // Yes. Set target and send a request
       // This will be asynchronous, so we may use the previous data for now.
       // MBclient.connect(sd.IP, sd.port);
-      MBclient.connect(sd.IP, sd.port);
+      MBclient.setTarget(sd.IP, sd.port);
       Error e = MBclient.addRequest((uint32_t)((millis() << 16) | (0x1008 | ms.sensor01)), 
         sd.SID, 
         READ_HOLD_REGISTER,
@@ -430,6 +444,7 @@ bool takeMeasurement(mySensor& ms) {
         ModbusError me(e);
         LOG_E("Error requesting sensor %d/%s - %s\n", ms.sensor01, ms.lbl, (const char *)me);
         registerMBerror(e);
+        ms.lastCheckOK = false;
       } else {
         rc = true;
       }
@@ -1122,17 +1137,19 @@ void wifiSetup(const char *hostname) {
 void handleError(Error e, uint32_t token) {
   ModbusError me(e);
   LOG_E("Error response for request %04X: %02X - %s\n", token, e, (const char *)me);
+  registerMBerror(e);
   // Register it in the appropriate health tracker
   if (token == 0x1008) { 
     DHT0.healthTracker <<= 1; 
     DHT0.statusLED.start(DEVICE_ERROR_BLINK);
+    DHT0.lastCheckOK = false;
   } else if ((token & 0xFFFF) == 0x1009) { 
     DHT1.healthTracker <<= 1; 
     DHT1.statusLED.start(DEVICE_ERROR_BLINK);
+    DHT1.lastCheckOK = false;
   } else if ((token & 0xFFFF) == 0x2008 || (token & 0xFFFF) == 0x2009) { 
     targetHealth <<= 1; 
     targetLED.start(DEVICE_ERROR_BLINK);
-    registerMBerror(e);
   }
 }
 
@@ -1154,6 +1171,7 @@ void handleData(ModbusMessage response, uint32_t token) {
     sensor.healthTracker <<= 1;
     sensor.healthTracker |= 1;
     sensor.statusLED.start(DEVICE_OK);
+    sensor.lastCheckOK = true;
   } else if ((token & 0xFFFF) == 0x2008) { // target state request
     // Get data
     uint16_t stateT = 0;
@@ -1192,7 +1210,7 @@ void switchTarget(bool onOff) {
       registerEvent(onOff ? TARGET_ON : TARGET_OFF);
       switchedON = onOff;
     } else if (settings.Target == DEV_MODBUS) {
-      MBclient.connect(settings.targetIP, settings.targetPort);
+      MBclient.setTarget(settings.targetIP, settings.targetPort);
       Error e = MBclient.addRequest((uint32_t)((millis() << 16) | 0x2009), settings.targetSID, WRITE_HOLD_REGISTER, 1, onOff ? 1 : 0);
       if (e != SUCCESS) {
         ModbusError me(e);
@@ -1802,11 +1820,12 @@ void loop() {
         // Is it a Modbus device?
         if (settings.Target == DEV_MODBUS) {
           // Yes, send a request
-          MBclient.connect(settings.targetIP, settings.targetPort);
+          MBclient.setTarget(settings.targetIP, settings.targetPort);
           Error e = MBclient.addRequest((uint32_t)((millis() << 16) | 0x2008), settings.targetSID, READ_HOLD_REGISTER, 1, 1);
           if (e != SUCCESS) {
             ModbusError me(e);
             Serial.printf("Error sending request 0x2008: %02X - %s\n", e, (const char *)me);
+            registerMBerror(e);
           }
           LOG_V("Switch status requested\n");
         } else {
@@ -1853,13 +1872,13 @@ void loop() {
         if (settings.sensor[i].type != DEV_NONE) {
           // We do, check sensor.
           bool succ = takeMeasurement(sensor);
-          if (succ) {
+          if (sensor.lastCheckOK) {
             measurementSuccess++;
           }
           // Is it relevant?
           if (sensor.isRelevant) {
             // Yes. Did we get data? (measurementSuccess will have been incremented already)
-            if (succ) {
+            if (sensor.lastCheckOK) {
               // Yes, we did.
               // 1: Check temperature
               switch (settings.sensor[i].TempMode) {
@@ -1937,6 +1956,7 @@ void loop() {
           if (failCnt > 3) {
             // Three failures in a row - fallback!
             switchTarget(settings.fallbackSwitch);
+            registerEvent(FAIL_FB);
           }
         }
       }
@@ -1965,8 +1985,8 @@ void loop() {
       }
         
       // Debug output
-      LOG_V("S1 %5.1f %5.1f %5.1f\n", DHT0.th.temperature, DHT0.th.humidity, DHT0.dewPoint);
-      LOG_V("S2 %5.1f %5.1f %5.1f\n", DHT1.th.temperature, DHT1.th.humidity, DHT1.dewPoint);
+      LOG_V("S0 %5.1f %5.1f %5.1f %s\n", DHT0.th.temperature, DHT0.th.humidity, DHT0.dewPoint, DHT0.lastCheckOK ? "OK" : "FAIL");
+      LOG_V("S1 %5.1f %5.1f %5.1f %s\n", DHT1.th.temperature, DHT1.th.humidity, DHT1.dewPoint, DHT1.lastCheckOK ? "OK" : "FAIL");
       LOG_V("    Check=%d/%d/%d Fails=%d Hysteresis=%04X\n", s1cond, s2cond, cccond, failCnt, Hysteresis);
       measure = millis();
     }
