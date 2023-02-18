@@ -1871,7 +1871,7 @@ void loop() {
         // Do we need a measurement at all?
         if (settings.sensor[i].type != DEV_NONE) {
           // We do, check sensor.
-          bool succ = takeMeasurement(sensor);
+          takeMeasurement(sensor);
           if (sensor.lastCheckOK) {
             measurementSuccess++;
           }
