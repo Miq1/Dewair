@@ -68,75 +68,74 @@ uint16_t cState = 0;                                        // last evaluation r
 
 // Target tracking
 uint16_t targetHealth = 0;
-bool switchedON = false;
+bool switchedON = false;                                    // Current target switch state
+// Modbus Error tracking
 struct TT {
-  Modbus::Error err;
-  uint16_t count;
+  Modbus::Error err;                                        // Error proper
+  uint16_t count;                                           // Number of consecutive occurrences
   TT() : err(SUCCESS), count(0) {}
 };
-const uint16_t TTslots(30);
-uint16_t ttSlot{0};
-TT targetTrack[TTslots];
+const uint16_t TTslots(30);                                 // Number of error groups tracked
+uint16_t ttSlot{0};                                         // Currently active group
+TT targetTrack[TTslots];                                    // Storage for error tracking
 
-// Blue status LED will blink differently if target socket is switched on
+// Set up blink patterns for all 4 LEDs
 Blinker signalLED(SIGNAL_LED);
 Blinker S0LED(S0STATUS_LED);
 Blinker S1LED(S1STATUS_LED);
 Blinker targetLED(TARGET_LED);
 
-// Blink pattern for "target ON"
+// Blink pattern for "target ON": quick triple, pause
 const uint16_t TARGET_ON_BLINK(0xA800);
-// Blink pattern for "target OF"
+// Blink pattern for "target OF": single, pause
 const uint16_t TARGET_OFF_BLINK(0x1000);
-// Wait for initial button press
+// Wait for initial button press: quick on/off sequence, no pause
 const uint16_t KNOB_BLINK(0x1111);
-// CONFIG mode:
+// CONFIG mode: long triple, pause
 const uint16_t CONFIG_BLINK(0xCCC0);
-// Wifi connect mode:
+// Wifi connect mode: long on/off, no pause
 const uint16_t WIFI_BLINK(0xFF00);
-// Manual mode
+// Manual mode: steady on
 const uint16_t MANUAL_BLINK(0xFFFF);
-// Device ignored
+// Device ignored: steady off
 const uint16_t DEVICE_IGNORED(0x0000);
-// Device OK
+// Device OK: steady on
 const uint16_t DEVICE_OK(0xFFFF);
-// Device error
+// Device error: even quicker on/off sequence, no pause
 const uint16_t DEVICE_ERROR_BLINK(0xAAAA);
 
 // Switch to trigger restarts etc.
 Buttoner tSwitch(SWITCH_PIN, LOW);
 
 // Flag for remote reboot request
-uint8_t rebootPending = 0;
-long unsigned int rebootGrace = 0;
+uint8_t rebootPending = 0;                // if != 0, reboot is awaiting second request
+long unsigned int rebootGrace = 0;        // Wait timer for confirming second reboot request
 
 // Two DHT sensors. In setup() will be found out if both are connected
 struct mySensor {
-  DHTesp sensor;
-  TempAndHumidity th;
-  float dewPoint;
+  DHTesp sensor;                               // DHT object
+  TempAndHumidity th;                          // Measured values
+  float dewPoint;                              // Calculated from measurement
   Blinker& statusLED;
   uint16_t healthTracker;
-  uint8_t sensor01;
-  bool lockFlag;
-  const char *lbl;
+  uint8_t sensor01;                            // Slot 0 or 1
   bool isRelevant;
   bool lastCheckOK;
-  mySensor(Blinker& sLED, uint8_t whichOne, const char *l) : 
+  mySensor(Blinker& sLED, uint8_t whichOne) : 
     statusLED(sLED), 
     healthTracker(0), 
     sensor01(whichOne), 
-    lockFlag(false), 
-    lbl(l), 
     isRelevant(false),
     lastCheckOK(false) { }
 };
-mySensor DHT0(S0LED, 0, "DHT0");
-mySensor DHT1(S1LED, 1, "DHT1");
+mySensor DHT0(S0LED, 0);
+mySensor DHT1(S1LED, 1);
 
 // Choice list for target and sensor devices
 enum DEVICEMODE : uint8_t { DEV_NONE=0, DEV_LOCAL, DEV_MODBUS, DEV_RESERVED };
+// Choice list for conditions
 enum DEVICECOND : uint8_t { DEVC_NONE=0, DEVC_LESS, DEVC_GREATER, DEVC_RESERVED };
+// Defined class for IP port numbers to do proper error checking
 class PORTNUM {
 protected:
   uint16_t value;
@@ -146,6 +145,7 @@ public:
   operator uint16_t() { return value; }
   uint16_t operator=(uint16_t v) { return (value = v); }
 };
+// Defined class for Modbus server ID to do proper error checking
 class SIDTYPE {
 protected:
   uint8_t value;
@@ -198,6 +198,78 @@ struct SetData {
   }
 } settings;
 uint16_t restarts;                     // number of reboots
+
+// History data 
+// Measurements are stored for 24h
+const uint16_t HistorySlots(120);      // Number of measurements collected in 24h
+const uint16_t HistoryAddress(400);    // Modbus register number of first history data
+struct HistoryEntry {
+  uint16_t temp0;                      // Sensor 0 temperature t0 as: uint16_t((t0 + 100.0) * 10.0) 
+  uint16_t hum0;                       // Sensor 0 humidity h0 as: uint16_t(h0 * 10.0) 
+  uint16_t temp1;                      // Sensor 1 temperature t1 as: uint16_t((t1 + 100.0) * 10.0) 
+  uint16_t hum1;                       // Sensor 1 humidity h1 as: uint16_t(h1 * 10.0) 
+  uint8_t on;                          // Target ON state as: (samples(ON) * 100) / samples
+};
+// Storage for history data
+HistoryEntry history[HistorySlots];
+// History evaluation struct
+class CalcHistory {
+protected:
+  float t0sum;                         // Sum of all t0 values in a sampling period
+  float h0sum;                         // Sum of all h0 values in a sampling period
+  float t1sum;                         // Sum of all t0 values in a sampling period
+  float h1sum;                         // Sum of all h0 values in a sampling period
+  uint16_t onCnt;                      // Number of samples with target==ON
+  uint16_t count;                      // Number of samples collected
+  uint16_t historySlot;         // Current slot
+  // reset: init counters
+  void reset() {
+    t0sum = h0sum = t1sum = h1sum = 0.0;
+    onCnt = count = 0;
+  }
+  // push: move collected data into history slot
+  void push(HistoryEntry& hE) {
+    if (count) {
+      hE.temp0 = (uint16_t)((t0sum / count) * 10.0 + 100.0);
+      hE.hum0 = (uint16_t)((h0sum / count) * 10.0);
+      hE.temp1 = (uint16_t)((t1sum / count) * 10.0 + 100.0);
+      hE.hum1 = (uint16_t)((h1sum / count) * 10.0);
+      hE.on = (uint8_t)((onCnt * 100) / count);
+    }
+  }
+public:
+  // Constructor
+  CalcHistory() : historySlot(0) { reset(); }
+  // calcSlot: determine history slot from hour and minute of current time
+  static uint16_t calcSlot() {
+    // We will need date and/or time
+    time_t now = time(NULL);
+    tm tm;
+    localtime_r(&now, &tm);           // update the structure tm with the current time
+    uint16_t minV = tm.tm_hour * 60 + tm.tm_min;    // Minute of day
+    return HistorySlots ? minV / (1440 / HistorySlots) : 0;   // find slot
+  }
+  // collect: add another set of values
+  uint16_t collect(float t0, float h0, float t1, float h1, bool on) {
+    // get current slot
+    uint16_t actSlot = calcSlot();
+    // Has it changed?
+    if (actSlot != historySlot) {
+      // Yes. we need to move the collected data into history and adwance to the next
+      push(history[historySlot]);
+      historySlot = actSlot;
+      reset();
+    }
+    count++;
+    t0sum += t0;
+    h0sum += h0;
+    t1sum += t1;
+    h1sum += h1;
+    onCnt += (on ? 1 : 0);
+    return count;
+  }
+};
+CalcHistory calcHistory;
 
 // Write both SETTINGS and SET_JS files with current settings data
 // Some helper functions first
@@ -376,9 +448,6 @@ const uint8_t MYSID(1);
 // Client to access switch and sensor sources
 ModbusClientTCPasync MBclient(10);
 
-// Modbus register map
-// *******************************
-
 // checkSensor: test if physical sensor is functional
 int checkSensor(mySensor& ms) {
   int rc = -1;
@@ -388,7 +457,7 @@ int checkSensor(mySensor& ms) {
   // The DHT lib will return nan values if no sensor is present
   if (!isnan(ms.sensor.getTemperature())) {
     // We got a value - sensor seems to be functional
-    LOG_I("Sensor %s ok.\n", ms.lbl);
+    LOG_I("Sensor %u ok.\n", ms.sensor01);
     ms.healthTracker |= 1;
     // Light upper status LED
     ms.statusLED.start(DEVICE_OK);
@@ -396,7 +465,7 @@ int checkSensor(mySensor& ms) {
     rc = 0;
   } else {
     // We caught a nan.
-    LOG_E("Sensor %s: error %s\n", ms.lbl, ms.sensor.getStatusString());
+    LOG_E("Sensor %u: error %s\n", ms.sensor01, ms.sensor.getStatusString());
     // Turn off status LED
     ms.statusLED.start(DEVICE_IGNORED);
     ms.lastCheckOK = false;
@@ -442,7 +511,7 @@ bool takeMeasurement(mySensor& ms) {
         (uint16_t)6);
       if (e != SUCCESS) {
         ModbusError me(e);
-        LOG_E("Error requesting sensor %d/%s - %s\n", ms.sensor01, ms.lbl, (const char *)me);
+        LOG_E("Error requesting sensor %d - %s\n", ms.sensor01, (const char *)me);
         registerMBerror(e);
         ms.lastCheckOK = false;
       } else {
@@ -779,6 +848,12 @@ ModbusMessage FC03(ModbusMessage request) {
         uVal = settings.fallbackSwitch ? 1 : 0;
         response.add(uVal);
         break;
+      case 48: // history slot count
+        response.add((uint16_t)HistorySlots);
+        break;
+      case 49: // history start register address
+        response.add((uint16_t)HistoryAddress);
+        break;
       // reserved register numbers left out
       case 64: // event slot count
         response.add((uint16_t)MAXEVENT);
@@ -807,6 +882,42 @@ ModbusMessage FC03(ModbusMessage request) {
         break;
       default: // Reserve registers
         response.add((uint16_t)0);
+        break;
+      }
+    }
+  // None of the regular registers, but is it in the history area?
+  } else if (HistorySlots && words && address >= HistoryAddress && (address + words) <= (HistoryAddress + 5 * HistorySlots)) {
+    // Yes, looks good. Prepare response header
+    response.add(request.getServerID(), request.getFunctionCode(), (uint8_t)(words * 2));
+    // Loop over all requested addresses
+    for (uint16_t a = address; a < address + words; a++) {
+      // Determine data type requested:
+      //   0: sensor 0 temperatures
+      //   1: sensor 0 humidities
+      //   2: sensor 1 temperatures
+      //   3: sensor 1 humidities
+      //   4: target on ratio
+      uint8_t type = (a - HistoryAddress) / HistorySlots;
+      // Calculate index in history
+      uint16_t offs = (a - HistoryAddress) % HistorySlots;
+      switch (type) {
+      case 0: // temp0
+        response.add((uint16_t)history[offs].temp0);
+        break;
+      case 1: // hum0
+        response.add((uint16_t)history[offs].hum0);
+        break;
+      case 2: // temp1
+        response.add((uint16_t)history[offs].temp1);
+        break;
+      case 3: // hum1
+        response.add((uint16_t)history[offs].hum1);
+        break;
+      case 4: // target ON
+        response.add((uint16_t)history[offs].on);
+        break;
+      default: // why???
+        LOG_E("Unknown history type %d?\n", type);
         break;
       }
     }
@@ -1162,11 +1273,9 @@ void handleData(ModbusMessage response, uint32_t token) {
     mySensor& sensor = ((token & 0xFFFF) == 0x1008) ? DHT0 : DHT1;
     // get data
     uint16_t offs = 3;
-    sensor.lockFlag = true;
     offs = response.get(offs, sensor.th.temperature);
     offs = response.get(offs, sensor.th.humidity);
     offs = response.get(offs, sensor.dewPoint);
-    sensor.lockFlag = false;
     // Register successful request
     sensor.healthTracker <<= 1;
     sensor.healthTracker |= 1;
@@ -1983,6 +2092,9 @@ void loop() {
           switchTarget(desiredStateON);
         }
       }
+
+      // Collect data in history
+      calcHistory.collect(DHT0.th.temperature, DHT0.th.humidity, DHT1.th.temperature, DHT1.th.humidity, switchedON);
         
       // Debug output
       LOG_V("S0 %5.1f %5.1f %5.1f %s\n", DHT0.th.temperature, DHT0.th.humidity, DHT0.dewPoint, DHT0.lastCheckOK ? "OK" : "FAIL");
