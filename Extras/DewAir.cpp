@@ -45,18 +45,31 @@ struct DAdata {
   uint16_t interval;
   uint16_t steps;
   uint16_t eSlots;
+  uint16_t hSlots;
+  uint16_t hAddress;
+  uint16_t hCurrent;
   uint16_t cState;
   uint16_t fallbackSwitch;
 } d;
 
+// History data
+struct History {
+  uint16_t t0;
+  uint16_t h0;
+  uint16_t t1;
+  uint16_t h1;
+  uint16_t on;
+};
+
 // Commands understood
 const char *cmds[] = { 
   "INFO", "ON", "OFF", "EVERY", "EVENTS", "INTERVAL", "HYSTERESIS", 
-  "TARGET", "SENSOR", "CONDITION", "FALLBACK", "REBOOT",
+  "TARGET", "SENSOR", "CONDITION", "FALLBACK", "REBOOT", "ERRORS",
+  "HISTORY",
   "_X_END" };
 enum CMDS : uint8_t { 
   INFO = 0, SW_ON, SW_OFF, EVRY, EVNTS, INTVL, HYST, 
-  TRGT, SNSR, COND, FALLB, REBT,
+  TRGT, SNSR, COND, FALLB, REBT, ERRS, HIST,
   X_END };
 
 const char * typeNam[] = { "temperature", "humidity", "dew point", "reserved"};
@@ -81,6 +94,8 @@ void usage(const char *msg) {
   cout << "  FALLBACK ON|OFF" << endl;
   cout << "  EVERY <seconds>" << endl;
   cout << "  EVENTS" << endl;
+  cout << "  ERRORS" << endl;
+  cout << "  HISTORY" << endl;
   cout << "  INTERVAL <seconds>" << endl;
   cout << "  HYSTERESIS <steps>" << endl;
   cout << "  TARGET NONE|LOCAL|<host[:port[:serverID]]]>" << endl;
@@ -248,9 +263,10 @@ int main(int argc, char **argv) {
         offs = response.get(offs, d.cDCond);
         offs = response.get(offs, d.cState);
         offs = response.get(offs, d.fallbackSwitch);
-        for (uint8_t i = 0; i < 16; i++) {
-          offs += 2; // Skip spare registers
-        }
+        offs = response.get(offs, d.hSlots);
+        offs = response.get(offs, d.hAddress);
+        offs = response.get(offs, d.hCurrent);
+        offs += 13 * 2; // Skip spare registers
         offs = response.get(offs, d.eSlots);
 
         // Print data
@@ -308,6 +324,8 @@ int main(int argc, char **argv) {
           d.runTime % 60);
         cout << buf << endl;
         snprintf(buf, BUFLEN, "%d event slots", d.eSlots);
+        cout << buf << endl;
+        snprintf(buf, BUFLEN, "%d history slots starting at %u, current is %u", d.hSlots, d.hAddress, d.hCurrent);
         cout << buf << endl;
         cout << "Switch conditions (all must be true): " << endl;
         uint8_t sensCnt = 0;
@@ -438,12 +456,14 @@ int main(int argc, char **argv) {
               MASTER_ON, MASTER_OFF,
               TARGET_ON, TARGET_OFF,
               ENTER_MAN, EXIT_MAN,
+              FAIL_FB,
             };
             const char *eventname[] = { 
               "no event", "date change", "boot date", "boot time", 
               "MASTER on", "MASTER off", 
               "target on", "target off", 
               "enter manual", "exit manual",
+              "failure fallback",
             };
             //          Loop over result data
             for (uint16_t i = 0; i < events; i++) {
@@ -695,7 +715,7 @@ int main(int argc, char **argv) {
 //    Adjust offset
       offset += type;
 //    Send request
-      ModbusMessage response = MBclient.syncRequest((uint32_t)23, targetServer, WRITE_HOLD_REGISTER, offset, uVal);
+      ModbusMessage response = MBclient.syncRequest(23, targetServer, WRITE_HOLD_REGISTER, offset, uVal);
       Error err = response.getError();
       if (err!=SUCCESS) {
         handleError(err, 23);
@@ -739,7 +759,7 @@ int main(int argc, char **argv) {
     {
 //    Function code 44
 //    Send request
-      ModbusMessage response = MBclient.syncRequest((uint32_t)99, targetServer, USER_DEFINED_44);
+      ModbusMessage response = MBclient.syncRequest(99, targetServer, USER_DEFINED_44);
       Error err = response.getError();
       if (err!=SUCCESS) {
         handleError(err, 99);
@@ -760,6 +780,132 @@ int main(int argc, char **argv) {
         default:
           cout << "unknown state." << endl;
           break;
+        }
+      }
+    }
+    break;
+// --------- Read error tracking storage -----------------
+  case ERRS:
+    {
+//    Read number of event slots to get offset to error tracking data
+      uint16_t addr = 64;
+      uint16_t words = 1;
+      uint16_t offs = 3;
+      ModbusMessage response = MBclient.syncRequest(24, targetServer, READ_HOLD_REGISTER, addr, words);
+      Error err = response.getError();
+      if (err!=SUCCESS) {
+        handleError(err, 24);
+      } else {
+        // Got that. Now get number of error slots
+        uint16_t errOffs = 0;
+        response.get(offs, errOffs);
+        addr += errOffs + 1;
+        response = MBclient.syncRequest(25, targetServer, READ_HOLD_REGISTER, addr, words);
+        err = response.getError();
+        if (err!=SUCCESS) {
+          handleError(err, 25);
+        } else {
+          uint16_t errCnt = 0;
+          response.get(offs, errCnt);
+          // Are there any?
+          if (errCnt) {
+            // Yes. go get them
+            addr++;
+            words = errCnt * 2;
+            response = MBclient.syncRequest(26, targetServer, READ_HOLD_REGISTER, addr, words);
+            err = response.getError();
+            if (err!=SUCCESS) {
+              handleError(err, 26);
+            } else {
+              // We seem to have some. Print out
+              cout << "Back : ERR  Count" << endl;
+              for (uint16_t inx = 0; inx < errCnt; ++inx) {
+                uint16_t code, count;
+                offs = response.get(offs, code);
+                offs = response.get(offs, count);
+                if (count) {
+                  ModbusError me((Error)code);
+                  snprintf(buf, BUFLEN, "%5u:  %02X  %5u - %s\n", inx, code, count, (const char *)me);
+                  cout << buf;
+                }
+              }
+            }
+          } else {
+            cout << "no errors tracking data available." << endl;
+          }
+        }
+      }
+    }
+    break;
+// --------- history data ------------------
+  case HIST:
+    {
+//    Get relevant parameters first
+      uint16_t addr = 48;
+      uint16_t words = 3;
+      uint16_t offs = 3;
+      ModbusMessage response = MBclient.syncRequest(27, targetServer, READ_HOLD_REGISTER, addr, words);
+      Error err = response.getError();
+      if (err!=SUCCESS) {
+        handleError(err, 27);
+      } else {
+        // Got parameters. Check and in case allocate memory
+        uint16_t hSlots, hAddress, hCurrent;
+        offs = response.get(offs, hSlots, hAddress, hCurrent);
+        cout << "slots=" << hSlots << ", address=" << hAddress << ", current=" << hCurrent << endl;
+        History h[hSlots];
+        // Read data in blocks
+        // ***** for now only read up to 126 slots! *****
+        addr = hAddress;
+        words = hSlots;
+        for (uint8_t block = 0; block < 5; block++) {
+          response = MBclient.syncRequest(28 + block, targetServer, READ_HOLD_REGISTER, addr, words);
+          err = response.getError();
+          if (err!=SUCCESS) {
+            handleError(err, 28 + block);
+          } else {
+            // Got data. Sort it into the right box
+            offs = 3;
+            for (uint16_t i = 0; i < hSlots; i++) {
+              switch (block) {
+              case 0: // sensor 0 temp
+                offs = response.get(offs, h[i].t0);
+                break;
+              case 1: // sensor 0 hum
+                offs = response.get(offs, h[i].h0);
+                break;
+              case 2: // sensor 1 temp
+                offs = response.get(offs, h[i].t1);
+                break;
+              case 3: // sensor 1 hum
+                offs = response.get(offs, h[i].h1);
+                break;
+              case 4: // ON percentage
+                offs = response.get(offs, h[i].on);
+                break;
+              default: // cannot happen...
+                break;
+              }
+            }
+          }
+          addr += hSlots;
+        }
+        // Got everything now
+        uint16_t minPerSlot = 1440 / hSlots;
+        cout << "Time;S0 temp;S0 hum;S1 temp;S1 hum;Target ON;now" << endl;
+        for (uint16_t i = 0; i < hSlots; i++) {
+          snprintf(buf, BUFLEN, 
+            "%2u:%02u;%.1f;%.1f;%.1f;%.1f;%u;%c",
+            (i * minPerSlot) / 60,
+            (i * minPerSlot) % 60,
+            h[i].t0 ? h[i].t0 / 10.0 - 100.0 : 0.0,
+            h[i].h0 ? h[i].h0 / 10.0 : 0.0,
+            h[i].t1 ? h[i].t1 / 10.0 - 100.0 : 0.0,
+            h[i].h1 ? h[i].h1 / 10.0 : 0.0,
+            h[i].on,
+            i == hCurrent ? '#' : ' '
+          );
+          cout << buf << endl;
         }
       }
     }
