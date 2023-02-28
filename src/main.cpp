@@ -874,6 +874,9 @@ ModbusMessage FC03(ModbusMessage request) {
       case 49: // history start register address
         response.add((uint16_t)HistoryAddress);
         break;
+      case 50: // current history data slot written
+        response.add((uint16_t)calcHistory.calcSlot());
+        break;
       // reserved register numbers left out
       case 64: // event slot count
         response.add((uint16_t)MAXEVENT);

@@ -165,13 +165,20 @@ Besides the special interaction during startup (see above for the start sequence
 | 46      | uint    | nibble 0: number of combo conditions met<br/>nibble 1: number of S1 conditions met<br/>nibble 2: number of S0 conditions met<br/>nibble 3: unused |     | debug info |
 | 47      | uint    | Fallback switch setting | YES | 0: OFF<br/>else: ON |
 | 48      | uint    | Number of history slots |     | 1440 minutes a day / slots = minutes within a slot for values to be averaged |
-| 49      | uint    | Start address of first history slot entry |     | see below! |
-| 50 .. 63 |    | *reserved* | YES | future extension space |
+| 49      | uint    | Start address of first history slot entry |     | see section below! |
+| 50      | uint    | Currently written history data slot |     | see below! |
+| 51 .. 63 |    | *reserved* | YES | future extension space |
 | 64      | uint    | Number of event slots |    | if 0: no events available |
 | 65 ..   | special | Logged events (number see register 64) |     | bits 11 .. 15: Event code<br/>bits 6 .. 10: day/hour<br/>bits 0 .. 5: month/minute |
 
 #### History entries
 For each history slot, temperatures and humidities of both sensors (if available) are averaged over the values within that slot.
+The slots are ordered from 0=00:00 to (history slots - 1)=last before midnight.
+Times as are related to slots can be calculated as follows:
+- 1440 / history slots = minutes per slot. The default 120 slots translate to 12 minutes per slot.
+- A given slot number needs to be multiplied by the minutes per slot, then has to be separated into hour and minute.
+  Example: slot 67 is 67 * 12 = 804 minutes since midnight. Divided by 60 this is 13 hours. The remainder are 24 minutes.
+  Hence the slot 67 is starting at 13:24 (1:24pm).
 To fit into an ``uint16_t`` register, values are encoded:
 - temperature: (avg(temp) + 100) * 10. ``1256`` will mean 25.6 degrees.
 - humidity: avg(hum) * 10. ``489`` stands for 48.9% RH.
