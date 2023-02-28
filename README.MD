@@ -164,10 +164,27 @@ Besides the special interaction during startup (see above for the start sequence
 | 45      | special | (S0 dew point - S1 dew point) condition type and value | YES | see above |
 | 46      | uint    | nibble 0: number of combo conditions met<br/>nibble 1: number of S1 conditions met<br/>nibble 2: number of S0 conditions met<br/>nibble 3: unused |     | debug info |
 | 47      | uint    | Fallback switch setting | YES | 0: OFF<br/>else: ON |
-| 48 .. 63 |    | *reserved* | YES | future extension space |
+| 48      | uint    | Number of history slots |     | 1440 minutes a day / slots = minutes within a slot for values to be averaged |
+| 49      | uint    | Start address of first history slot entry |     | see below! |
+| 50 .. 63 |    | *reserved* | YES | future extension space |
 | 64      | uint    | Number of event slots |    | if 0: no events available |
 | 65 ..   | special | Logged events (number see register 64) |     | bits 11 .. 15: Event code<br/>bits 6 .. 10: day/hour<br/>bits 0 .. 5: month/minute |
 
+#### History entries
+For each history slot, temperatures and humidities of both sensors (if available) are averaged over the values within that slot.
+To fit into an ``uint16_t`` register, values are encoded:
+- temperature: (avg(temp) + 100) * 10. ``1256`` will mean 25.6 degrees.
+- humidity: avg(hum) * 10. ``489`` stands for 48.9% RH.
+Additionally the percentage of the target being on is collected.
+All time ON withing the slot is 100%, never ON is 0%.
+
+| Register address | type | Contents | Write? | Remarks |
+| ----------------:| ---- | -------- |:------:| ------- |
+| History offset..history offset + history slots - 1 | uint   | Sensor 0 temperature history values |  | encoded as described above |
+| like the above, History slots added | uint   | Sensor 0 humidity history values |  | encoded as described above |
+| like line 1, 2 * History slots added | uint   | Sensor 1 temperature history values |  | encoded as described above |
+| like line 1, 3 * History slots added | uint   | Sensor 1 humidity history values |  | encoded as described above |
+| like line 1, 4 * History slots added | uint   | Target switch ON percentage |  | see section above |
 
 ### Applications
 
