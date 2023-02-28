@@ -230,9 +230,9 @@ protected:
   // push: move collected data into history slot
   void push(HistoryEntry& hE) {
     if (count) {
-      hE.temp0 = (uint16_t)((t0sum / count) * 10.0 + 100.0);
+      hE.temp0 = (uint16_t)(((t0sum / count) + 100.0) * 10.0);
       hE.hum0 = (uint16_t)((h0sum / count) * 10.0);
-      hE.temp1 = (uint16_t)((t1sum / count) * 10.0 + 100.0);
+      hE.temp1 = (uint16_t)(((t1sum / count) + 100.0) * 10.0);
       hE.hum1 = (uint16_t)((h1sum / count) * 10.0);
       hE.on = (uint8_t)((onCnt * 100) / count);
     }
@@ -261,10 +261,30 @@ public:
       reset();
     }
     count++;
-    t0sum += t0;
-    h0sum += h0;
-    t1sum += t1;
-    h1sum += h1;
+    // If value is NaN or humidity is zero (unlikely...), do not use it, but promote the current average
+    if (isnanf(t0) || h0 == 0.0) {
+      t0sum += t0sum / count;
+    } else {
+      t0sum += t0;
+    }
+    // If value is NaN or humidity is zero (unlikely...), do not use it, but promote the current average
+    if (isnanf(h0) || h0 == 0.0) {
+      h0sum += h0sum / count;
+    } else {
+      h0sum += h0;
+    }
+    // If value is NaN or humidity is zero (unlikely...), do not use it, but promote the current average
+    if (isnanf(t1) || h1 == 0.0) {
+      t1sum += t1sum / count;
+    } else {
+      t1sum += t0;
+    }
+    // If value is NaN or humidity is zero (unlikely...), do not use it, but promote the current average
+    if (isnanf(h1) || h1 == 0.0) {
+      h1sum += h1sum / count;
+    } else {
+      h1sum += h0;
+    }
     onCnt += (on ? 1 : 0);
     return count;
   }
