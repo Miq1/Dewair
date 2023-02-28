@@ -277,13 +277,13 @@ public:
     if (isnanf(t1) || h1 == 0.0) {
       t1sum += t1sum / count;
     } else {
-      t1sum += t0;
+      t1sum += t1;
     }
     // If value is NaN or humidity is zero (unlikely...), do not use it, but promote the current average
     if (isnanf(h1) || h1 == 0.0) {
       h1sum += h1sum / count;
     } else {
-      h1sum += h0;
+      h1sum += h1;
     }
     onCnt += (on ? 1 : 0);
     return count;
