@@ -147,4 +147,6 @@ It is advisable to catch the output in a file and open it in a spreadsheet:
 ```
 micha@LinuxBox:~$ DewAir anbau history > anbau.csv
 ```
+With a bit of massaging in the spreadsheet you can quickly get some nice diagrams:
+
 <img src=https://github.com/Miq1/DewAir/blob/master/Extras/Diagram.png alt="Sample diagram">
