@@ -153,5 +153,77 @@ With a bit of massaging in the spreadsheet you can quickly get some nice diagram
 <img src=https://github.com/Miq1/DewAir/blob/master/Extras/Diagram.png alt="Sample diagram">
 
 A sixth column is added to the output that is almost empty. The exception is a ``#`` sign in that row where the next slot will be written.
+So right of that line is data from the previous day, left of it the data for the current day up to now.
+
 In the diagram above I used a simple formula (``=IF($H3=" ";$G2;100)``) to have a line jump up at the current slot. It will take a zero as start value and always replicate the value of the line above - except if the neighbouring cell has something other than a blank in it; then the value will set to 100.
 
+#### REBOOT
+A mechanism has been integrated to remotely restart a DewAir device. 
+It makes use of the user-definable Modbus function code 0x44.
+``REBOOT`` has to be sent twice within 60 seconds to have an effect. 
+This is meant as a basic security mechanism. 
+The first ``REBOOT`` will be answered by ``armed.``, the second, if received within the 60s period, will print out ``rebooting.``.
+If the second commend is late or not given at all, the ``armed`` state will be reset on the device.
+
+#### INTERVAL ``<seconds>`` and HYSTERESIS ``<turns>``
+These two commands will modify the reaction speed of the device on changing sensor data.
+Data is sampled every ``INTERVAL`` seconds. Note that the seconds parameter can not be lower than 20 to not overload the device.
+
+``HYSTERESIS`` sets a number of sampling periods where the sampled values are fulfilling the switching conditions without exception.
+If that happens, a switch is executed.
+
+F.i. a combination of 30 seconds and a hysteresis of 6 will require the switch conditions to last at least 3 minutes to trigger a switch.
+Higher values will lead to a slower, smoother switching behaviour, whereas short intervals or less hysteresis periods will let the device react more quickly.
+It depends from your application which may be the adequate setting.
+
+#### TARGET
+The ``TARGET`` command lets you define if there is a switching target at all and what type it is.
+
+A ``TARGET NONE`` will disable any switching actions, while sensor data still is collected.
+This may be useful if you are using a DewAir device as a remote temperature/humidity platform to read these data and make it available to other devices.
+Please see the ``SENSOR`` explanations in the section below.
+
+``TARGET LOCAL`` enables the device to use the internal relay/SSR logic as a target. 
+A stand-alone DewAir device may switch a built-in socket this way.
+
+Finally ``TARGET <Modbus address>`` allows for remote target devices that can be switched by a Modbus request.
+At this time only the [Smartdose](https://github.com/eModbus/Smartdose) type of devices is supported. 
+Other WiFi sockets will need a different command or even different protocol that would have to be integrated first.
+Contributions are always welcome... :wink:
+
+The Modbus address needs to be given as described above for the first parameter of the DewAir application itself: either a DNS name or a set of IP address, port and server ID, joined by colons ':'.
+
+#### SENSOR
+Each of the two attachable sensors may be non-existent, plugged in locally into the device or other DewAir devices in the same local network.
+
+``SENSOR`` always needs a sensor number first, that can be ``0`` for the first or ``1`` for the second DHT22 sensor.
+
+After that we can have ``NONE`` to disable the sensor slot, ``LOCAL`` for sensors connected by wire to the device, or a Modbus address again to connect to another DewAir device.
+
+The Modbus address has to follow the very same rules as described above for the DewAir application or the ``TARGET`` parameter.
+It requires one more parameter after it, though: the sensor slot on the remote device.
+This slot addresses the two sensors on that device the same way as we are doing here: ``0`` is the first, ``1`` the second sensor.
+
+Instead of collecting the data locally, a remote sensor will be requested by Modbus. 
+Note that due to the communication delays and collecting interval on the remote device the data gathered remotely may not exactly be measured at the same time the request was sent, but will be delayed for some seconds.
+
+#### CONDITION
+If and when a target gets switched is depending from the conditions you have defined in regards to the sensor data.
+The ``CONDITION`` command lets you set these conditions at will.
+
+First you will have to tell what conditions you are going to set:
+- ``SENSOR 0`` or ``SENSOR 1`` will select the respective sensor
+- ``DIFF`` instead will target on conditions for both sensors combined. Note that this is not possible if one or both sensors are set to ``NONE``!
+
+The next parameter selects the data type you are using for the condition - ``TEMP`` for temperature, ``HUM`` for humidity or ``DEW`` for the dew point temperature evaluated internally.
+
+Last is the condition proper:
+- ``IGNORE`` disables it to not be regarded any more
+- ``BELOW <value>`` will result ``TRUE`` if the selected data is lower than the given ``<value>``
+- opposite, ``ABOVE <value>`` will be ``TRUE`` if the data is higher than ``<value>``
+
+Example:
+```
+DewAir condition sensor 0 temp below 5
+```
+will require the first sensor's temperature to be lower than 5 degrees Celsius to be evaluated to ``TRUE``.
