@@ -141,6 +141,7 @@ Hence you will have 120 slots per 24h that can be retrieved in a single Modbus r
 There are 120 such values for sensor 0 temperature, humidity, sensor 1 temperature and humidity and the target state value. 
 A complete history data set will have 600 values, each in a Modbus register.
 Floating point sensor values are encoded to fit into the 16 bits of a Modbus register.
+The coding scheme is described on the main page - see section 'History' there.
 
 The ``HISTORY`` command will do all 5 requests and the decoding in one step and outputs the data as a comma-separated list to be processed in a spreadsheet program.
 It is advisable to catch the output in a file and open it in a spreadsheet:
@@ -150,3 +151,7 @@ micha@LinuxBox:~$ DewAir anbau history > anbau.csv
 With a bit of massaging in the spreadsheet you can quickly get some nice diagrams:
 
 <img src=https://github.com/Miq1/DewAir/blob/master/Extras/Diagram.png alt="Sample diagram">
+
+A sixth column is added to the output that is almost empty. The exception is a ``#`` sign in that row where the next slot will be written.
+In the diagram above I used a simple formula (``=IF($H3=" ";$G2;100)``) to have a line jump up at the current slot. It will take a zero as start value and always replicate the value of the line above - except if the neighbouring cell has something other than a blank in it; then the value will set to 100.
+
