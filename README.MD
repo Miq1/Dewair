@@ -1,3 +1,6 @@
+# Important note
+This project now is maintained on [Codeberg.org only](https://codeberg.org/Miq19/Dewair). The code here will be frozen at the current (Mar 30, 2025) state.
+
 ## Multi-purpose environment sensor device
 
 DewAir was originally created to measure temperatures, humidity and dew point inside and outside a room and 
